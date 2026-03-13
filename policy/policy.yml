@@ -1,0 +1,61 @@
+allowed_intents:
+  - show_menu
+  - help
+  - greet
+  - login
+  - order_status
+
+restricted_intents:
+  - create_order
+  - cancel_order
+
+domain_keywords:
+  - food
+  - menu
+  - order
+  - meal
+  - lunch
+  - dinner
+  - breakfast
+  - protein
+  - keto
+  - salad
+  - bowl
+  - diet
+  - calories
+  - price
+  - delivery
+  - restaurant
+  - item
+  - dish
+  - hi
+  - hello
+  - hey
+  - help
+  - login
+  - coupon
+  - discount
+  - veg
+  - chicken
+  - paneer
+  - today
+  - when
+  - status
+  - deliver
+  - delivered
+  - payment
+  - paid
+  - pending
+  - track
+  - invoice
+  - receipt
+  - bill
+  - qr
+  - upi
+  - link
+  - resend
+  - proof
+  - due
+  - amount
+  - total
+  - charge

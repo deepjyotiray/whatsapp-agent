@@ -1,0 +1,21 @@
+{
+  "ollama": {
+    "url": "http://localhost:11434/api/generate",
+    "model": "llama3"
+  },
+  "otp": {
+    "ttlSeconds": 300
+  },
+  "log": {
+    "level": "info"
+  },
+  "api": {
+    "port": 3001,
+    "secret": "change-this-secret"
+  },
+  "admin": {
+    "number": "91XXXXXXXXXX",
+    "keyword": "your-keyword",
+    "pin": "your-pin"
+  }
+}

@@ -1,0 +1,23 @@
+# WhatsApp session — never commit
+auth/
+
+# Secrets
+config/settings.json
+
+# Logs
+logs/
+
+# Vector DB data
+vectordb/
+
+# Runtime data
+data/
+
+# Dependencies
+node_modules/
+
+# Temp files
+*.lance
+
+# IDE
+.idea/

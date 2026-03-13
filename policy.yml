@@ -1,0 +1,5 @@
+allowed_intents:
+  - show_menu
+  - help
+  - login
+  - order_status
