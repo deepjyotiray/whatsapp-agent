@@ -5,12 +5,10 @@ const Database = require("better-sqlite3")
 const { buildFramedQr } = require("./buildQr")
 const settings = require("../config/settings.json")
 
-const AGENT_URL = `http://127.0.0.1:${settings.api.port}/send`
+const AGENT_URL    = `http://127.0.0.1:${settings.api.port}/send`
 const AGENT_SECRET = settings.api.secret
 
-function getDb(dbPath) {
-    return new Database(dbPath, { readonly: true })
-}
+function getDb(dbPath) { return new Database(dbPath, { readonly: true }) }
 
 function normalisePhone(phone) {
     return String(phone).replace(/@.*$/, "").replace(/\D/g, "").slice(-10)
@@ -75,18 +73,24 @@ function detectFocus(msg) {
     return "full"
 }
 
+function formatPhone(rawPhone, countryCode = "91") {
+    const digits = rawPhone.replace(/@.*$/, "").replace(/\D/g, "")
+    const local10 = digits.slice(-10)
+    return `+${countryCode}${local10}`
+}
+
 async function execute(_params, context, toolConfig) {
-    const dbPath = toolConfig.db_path
+    const { db_path, upi_handle, website, country_code = "91", brand_label } = toolConfig
     const last10 = normalisePhone(context.phone)
 
-    if (!isRegistered(dbPath, last10)) {
-        return "It looks like you're not registered yet.\nSign up at 👇\nhttps://healthymealspot.com/login"
+    if (!isRegistered(db_path, last10)) {
+        return `It looks like you're not registered yet.\nSign up at 👇\nhttps://${website}/login`
     }
 
-    const orders = getPendingOrders(dbPath, last10)
+    const orders = getPendingOrders(db_path, last10)
 
     if (!orders.length) {
-        return "You have no active orders right now.\nVisit https://healthymealspot.com to place one! 🍽️"
+        return `You have no active orders right now.\nVisit https://${website} to place one! 🍽️`
     }
 
     const focus = detectFocus(context.rawMessage || "")
@@ -94,16 +98,15 @@ async function execute(_params, context, toolConfig) {
     if (focus === "delivery") return orders.map(o => deliveryFocus(o)).join("\n\n")
 
     if (focus === "invoice") {
+        const to = formatPhone(context.phone, country_code)
         const results = await Promise.allSettled(orders.map(async o => {
             const msg = o.customer_message
             if (!msg) return paymentFocus(o)
             if ((o.payment_status || "").toLowerCase() === "paid") return msg
-            const upiLink = `upi://pay?pa=9594614752@pthdfc&pn=RAY+D&am=${o.total}&cu=INR&tn=Invoice+${o.id}`
-            const phone = context.phone.replace(/@.*$/, "").replace(/^(\d{10})$/, "+91$1")
-            const to = phone.startsWith("+") ? phone : `+${phone}`
+            const upiLink = `upi://pay?pa=${upi_handle}&pn=RAY+D&am=${o.total}&cu=INR&tn=Invoice+${o.id}`
             let tmpFile
             try {
-                tmpFile = await buildFramedQr(upiLink)
+                tmpFile = await buildFramedQr(upiLink, brand_label || website)
                 await fetch(AGENT_URL, {
                     method: "POST",
                     headers: { "Content-Type": "application/json", "x-secret": AGENT_SECRET },

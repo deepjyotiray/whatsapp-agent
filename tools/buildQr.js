@@ -2,10 +2,11 @@
 
 const { execFile } = require("child_process")
 const path = require("path")
-const os = require("os")
+const os   = require("os")
 
-function buildFramedQr(upiLink) {
+function buildFramedQr(upiLink, brandLabel = "") {
     const outFile = path.join(os.tmpdir(), `qr-${Date.now()}.png`)
+    const label   = brandLabel.replace(/"/g, "")
     const script = `
 import urllib.request, urllib.parse, io
 from PIL import Image, ImageDraw, ImageFont
@@ -25,8 +26,9 @@ out.paste(bar_img,(0,160+pad*2))
 draw=ImageDraw.Draw(out)
 try: font=ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc",13)
 except: font=ImageFont.load_default()
-bbox=draw.textbbox((0,0),"healthymealspot.com",font=font)
-draw.text(((W-(bbox[2]-bbox[0]))//2,160+pad*2+9),"healthymealspot.com",fill=(255,255,255,255),font=font)
+label="${label}"
+bbox=draw.textbbox((0,0),label,font=font)
+draw.text(((W-(bbox[2]-bbox[0]))//2,160+pad*2+9),label,fill=(255,255,255,255),font=font)
 mask=Image.new("L",(W,H),0)
 ImageDraw.Draw(mask).rounded_rectangle([0,0,W-1,H-1],radius=12,fill=255)
 out.putalpha(mask)

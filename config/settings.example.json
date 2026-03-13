@@ -1,5 +1,6 @@
 {
-  "ollama": {
+  "llm": {
+    "provider": "ollama",
     "url": "http://localhost:11434/api/generate",
     "model": "llama3"
   },
@@ -16,6 +17,8 @@
   "admin": {
     "number": "91XXXXXXXXXX",
     "keyword": "your-keyword",
-    "pin": "your-pin"
+    "pin": "your-pin",
+    "db_path": "/absolute/path/to/your/orders.db",
+    "business_name": "Your Business Name"
   }
 }

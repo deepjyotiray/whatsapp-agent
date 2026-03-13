@@ -27,4 +27,6 @@ tools:
   support_faq:
     type: support
     faq_path: "./agents/support/faq.yml"
-    db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
+    db_path: "/path/to/orders.db"
+    business_name: "Your Business Name"
+    escalation_phone: "+91XXXXXXXXXX"

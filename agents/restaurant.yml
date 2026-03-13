@@ -12,6 +12,12 @@ agent:
   restricted_message: "Sorry, I cannot perform that request."
   error_message: "Something went wrong. Please try again."
 
+intent_hints:
+  greet: "customer says hi, hello, hey, good morning, namaste, or any greeting"
+  help: "customer asks what can you do, how does this work, or asks for help"
+  show_menu: "customer asks about food, menu, items, prices, veg, non-veg, today's special, what's available"
+  order_status: "customer asks about their order, delivery, payment, invoice, receipt, QR code, when will it arrive"
+
 intents:
   greet:
     tool: static_greet
@@ -38,10 +44,20 @@ tools:
 
   rag_menu:
     type: rag
+    db_path: "/path/to/orders.db"
     vectordb_path: "./vectordb"
     table: restaurant
+    system_prompt: |
+      You are a helpful assistant for Ray's Home Kitchen, a home-cooked food delivery service.
+      Answer using ONLY the provided menu data. Be concise and well formatted.
+      Only include items relevant to what was asked. Do NOT make up items or prices.
+      If nothing matches, say so clearly.
 
   order_lookup:
     type: sqlite
-    db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
+    db_path: "/path/to/orders.db"
     table: orders
+    upi_handle: "XXXXXXXXXX@pthdfc"
+    website: "yourdomain.com"
+    brand_label: "yourdomain.com"
+    country_code: "91"

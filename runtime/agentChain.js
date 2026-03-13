@@ -91,10 +91,12 @@ class AgentChain {
                 }
             }
 
-            // 3. Intent parser — LLM as translator only
+            // 3. Intent parser — LLM as translator only, reads intents from manifest
             let intent
             try {
-                intent = await parseIntent(message)
+                const allowedIntents = Object.keys(manifest.intents)
+                const intentHints    = manifest.intent_hints || {}
+                intent = await parseIntent(message, allowedIntents, intentHints)
             } catch (err) {
                 logger.error({ phone, err }, "chain: intent parser error")
                 continue

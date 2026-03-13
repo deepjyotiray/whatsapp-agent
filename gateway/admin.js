@@ -2,11 +2,11 @@
 
 const { exec } = require("child_process")
 const Database = require("better-sqlite3")
-const fetch = require("node-fetch")
 const settings = require("../config/settings.json")
+const { complete } = require("../providers/llm")
 const logger = require("./logger")
 
-const DB_PATH = "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
+const DB_PATH = settings.admin.db_path
 
 const { keyword, pin, number: adminNumber } = settings.admin
 
@@ -153,7 +153,8 @@ ${recentOrders.map(o => `- ${o.id} | ${o.customer_name} | ₹${o.total} | ${o.de
 // ── LLM natural language query ────────────────────────────────────────────────
 
 async function queryWithLlm(question, dbContext) {
-    const prompt = `You are an admin assistant for Ray's Home Kitchen food business.
+    const businessName = settings.admin.business_name || "the business"
+    const prompt = `You are an admin assistant for ${businessName}.
 Answer the admin's question using ONLY the data provided below. Be concise and use numbers/facts directly.
 Do not make up data. If something is not in the data, say so.
 
@@ -163,13 +164,7 @@ Admin question: ${question}
 Answer:`
 
     try {
-        const res = await fetch(settings.ollama.url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: settings.ollama.model, prompt, stream: false })
-        })
-        const data = await res.json()
-        return (data.response || "").trim() || "No response from LLM."
+        return await complete(prompt) || "No response from LLM."
     } catch {
         return "LLM unavailable. Raw data:\n" + dbContext
     }
