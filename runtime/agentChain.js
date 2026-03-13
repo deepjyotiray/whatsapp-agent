@@ -71,6 +71,17 @@ class AgentChain {
             const agentName = manifest.agent.name
             const skipDomainGate = manifest.agent.skip_domain_gate === true
 
+            // If customer has an active support session, short/ambiguous messages
+            // go straight to support agent — they're follow-ups, not new intents
+            if (manifest.agent.domain !== "support") {
+                const { getHistory } = require("./sessionMemory")
+                const history = getHistory(phone)
+                const wordCount = message.trim().split(/\s+/).length
+                if (history.length > 0 && wordCount <= 3) {
+                    logger.info({ phone, agent: agentName }, "chain: active support session, skipping to support")
+                    continue
+                }
+            }
             // 2. Domain gate — skipped for agents that declare skip_domain_gate: true
             if (!skipDomainGate) {
                 const wordCount = message.trim().split(/\s+/).length
@@ -89,22 +100,17 @@ class AgentChain {
                 continue
             }
 
-            // Support agent uses a catch-all intent — route everything to it
+            // Support agent bypasses policy — it handles everything the restaurant agent couldn't
             if (manifest.agent.domain === "support") {
                 intent = { intent: "support", parameters: {} }
-            }
-
-            logger.info({ phone, agent: agentName, intent: intent.intent }, "chain: intent parsed")
-
-            // 4. Policy engine
-            const policy = evaluate(intent)
-            if (!policy.allowed) {
-                logger.info({ phone, agent: agentName, intent: intent.intent }, "chain: policy blocked, trying next")
-                // Only return restricted message from primary agent, others pass through
-                if (this._agents.indexOf(manifest) === 0 && policy.reason === "restricted_intent") {
-                    return manifest.agent.restricted_message || "Sorry, I cannot perform that request."
+            } else {
+                // 4. Policy engine — only for non-support agents
+                const policy = evaluate(intent)
+                if (!policy.allowed) {
+                    logger.info({ phone, agent: agentName, intent: intent.intent }, "chain: policy blocked, trying next")
+                    // restricted_intent on primary agent — still pass to support, don't hard block
+                    continue
                 }
-                continue
             }
 
             // 5. Execute tool
