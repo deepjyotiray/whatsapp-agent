@@ -201,12 +201,35 @@ const TOOL_DEFINITIONS = [
     {
         type: "function",
         function: {
+            name: "snapshot",
+            description: "Get all interactive elements on the current page with their ref IDs. Returns lines like: link \"Title 3 minutes\" [ref=e249]. Use the ref value with click and fill tools.",
+            parameters: { type: "object", properties: {} }
+        }
+    },
+    {
+        type: "function",
+        function: {
             name: "click",
-            description: "Click an element on the page by CSS selector or visible text.",
+            description: "Click an element by its ref from snapshot. Pass the ref string e.g. e249.",
             parameters: {
                 type: "object",
-                properties: { selector: { type: "string", description: "CSS selector or visible text of the element" } },
-                required: ["selector"]
+                properties: { ref: { type: "string", description: "Ref string from snapshot e.g. e249" } },
+                required: ["ref"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "fill",
+            description: "Fill a text input by its ref from snapshot.",
+            parameters: {
+                type: "object",
+                properties: {
+                    ref:  { type: "string", description: "Ref string from snapshot" },
+                    text: { type: "string", description: "Text to fill" }
+                },
+                required: ["ref", "text"]
             }
         }
     },
@@ -290,43 +313,6 @@ const TOOL_DEFINITIONS = [
     {
         type: "function",
         function: {
-            name: "get_dom",
-            description: "Get all interactive elements on the current page (inputs, buttons, links) with their index, type, name, placeholder, aria-label. ALWAYS call this after navigating to a page before trying to type or click — it tells you the exact index of each element so you can use type_by_index and click_by_index reliably.",
-            parameters: { type: "object", properties: {} }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "type_by_index",
-            description: "Type text into an input field identified by its DOM index from get_dom. More reliable than type_text with CSS selectors — use this for all form filling.",
-            parameters: {
-                type: "object",
-                properties: {
-                    index: { type: "number", description: "Element index from get_dom" },
-                    text:  { type: "string", description: "Text to type" }
-                },
-                required: ["index", "text"]
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "click_by_index",
-            description: "Click an element identified by its DOM index from get_dom. More reliable than click with CSS selectors.",
-            parameters: {
-                type: "object",
-                properties: {
-                    index: { type: "number", description: "Element index from get_dom" }
-                },
-                required: ["index"]
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
             name: "close_browser",
             description: "Close the browser when done with all browser tasks.",
             parameters: { type: "object", properties: {} }
@@ -390,6 +376,33 @@ const TOOL_DEFINITIONS = [
             description: "List all available built-in tools and custom scripts.",
             parameters: { type: "object", properties: {} }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "youtube_play",
+            description: "Open a YouTube watch URL in Chrome and start playback. Use this as the final step for all YouTube tasks instead of mac_automation.",
+            parameters: {
+                type: "object",
+                properties: { url: { type: "string", description: "Full youtube.com/watch?v=... URL" } },
+                required: ["url"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "run_skill",
+            description: "Run a skill from the skills library. Available skills: screenshot, speech, transcribe, imagegen, pdf, slides, sora, playwright, doc, spreadsheet, figma, sentry, yeet, gh-fix-ci, gh-address-comments, netlify-deploy, vercel-deploy, cloudflare-deploy, render-deploy, security-best-practices, security-threat-model, notion-knowledge-capture, notion-meeting-intelligence, linear. Each skill has scripts and instructions for its task.",
+            parameters: {
+                type: "object",
+                properties: {
+                    skill:  { type: "string", description: "Skill name e.g. 'speech', 'imagegen', 'screenshot', 'transcribe', 'pdf', 'slides', 'sora'" },
+                    task:   { type: "string", description: "What to do with this skill — be specific with file paths, text, options" }
+                },
+                required: ["skill", "task"]
+            }
+        }
     }
 ]
 
@@ -403,7 +416,15 @@ const SHELL_PATTERNS = [
     /^mkdir\s/i,    /^cp\s/i,       /^mv\s/i,
     /^osascript\s/i, /^killall\s/i, /^pkill\s/i,    /^open\s/i,
     /^screencapture\s/i, /^say\s/i, /^defaults\s/i, /^launchctl\s/i,
+    /^python3\s/i,  /^pip3\s/i,     /^uv\s/i,       /^\.venv\/bin\/python/i,
 ]
+
+const VENV_PYTHON = path.join(__dirname, "../.venv/bin/python3")
+const SHELL_ENV = {
+    ...process.env,
+    OPENAI_API_KEY: settings.admin?.agent_llm?.api_key || process.env.OPENAI_API_KEY || "",
+    PATH: `${path.join(__dirname, "../.venv/bin")}:${process.env.PATH || ""}`
+}
 
 function runShell(cmd) {
     return new Promise(resolve => {
@@ -411,7 +432,7 @@ function runShell(cmd) {
             resolve(`❌ Command not allowed: ${cmd.split(" ")[0]}`)
             return
         }
-        exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+        exec(cmd, { timeout: 30000, env: SHELL_ENV }, (err, stdout, stderr) => {
             const out = (stdout || stderr || "").trim()
             resolve(err && !out ? `❌ ${err.message}` : out || "✅ Done (no output)")
         })
@@ -645,11 +666,42 @@ async function serverHealth() {
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 const COMPUTER_TOOLS = new Set([
-    "open_browser", "open_in_chrome", "chrome_js", "navigate", "screenshot", "click",
+    "open_browser", "navigate", "screenshot", "click",
     "type_text", "press_key", "read_page", "scrape_page", "scroll",
     "wait_for_element", "get_current_url", "close_browser",
-    "get_dom", "type_by_index", "click_by_index"
+    "get_dom", "type_by_index", "click_by_index", "snapshot", "fill", "run_code"
 ])
+
+const SKILLS_DIR = path.join(__dirname, "../skills")
+
+async function runSkill(skillName, task) {
+    const skillDir = path.join(SKILLS_DIR, skillName)
+    if (!fs.existsSync(skillDir)) {
+        const available = fs.readdirSync(SKILLS_DIR).join(", ")
+        return `❌ Skill '${skillName}' not found. Available: ${available}`
+    }
+    const skillMd = path.join(skillDir, "SKILL.md")
+    const instructions = fs.existsSync(skillMd) ? fs.readFileSync(skillMd, "utf8").slice(0, 3000) : ""
+    const scriptsDir  = path.join(skillDir, "scripts")
+    const scripts     = fs.existsSync(scriptsDir) ? fs.readdirSync(scriptsDir) : []
+
+    // Copy skill scripts to tmp/skills/<name>/ so they can be run
+    const tmpSkillDir = path.join(__dirname, "../tmp/skills", skillName)
+    if (!fs.existsSync(tmpSkillDir)) fs.mkdirSync(tmpSkillDir, { recursive: true })
+    for (const f of scripts) {
+        const src = path.join(scriptsDir, f)
+        const dst = path.join(tmpSkillDir, f)
+        if (!fs.existsSync(dst)) fs.copyFileSync(src, dst)
+    }
+
+    // Build a ready-to-run example command for Python skills
+    const pyScript = scripts.find(f => f.endsWith(".py"))
+    const scriptHint = pyScript
+        ? `\n\nRUN THE SCRIPT EXACTLY LIKE THIS (do NOT write a new script):\n  run_shell: .venv/bin/python3 tmp/skills/${skillName}/${pyScript} <subcommand> [flags]\n\nThe script reads OPENAI_API_KEY from the environment automatically — it is already set.`
+        : ""
+
+    return `✅ Skill '${skillName}' loaded.\nScripts in tmp/skills/${skillName}/: ${scripts.join(", ") || "none"}${scriptHint}\n\nInstructions:\n${instructions}\n\nTask: ${task}`
+}
 
 function runMacAutomation(script, type) {
     return new Promise(resolve => {
@@ -660,12 +712,23 @@ function runMacAutomation(script, type) {
     })
 }
 
+async function youtubePlay(url) {
+    await runMacAutomation(`tell application "Google Chrome" to open location "${url}"`, "applescript")
+    await new Promise(r => setTimeout(r, 5000))
+    await runMacAutomation(`tell application "Google Chrome" to activate`, "applescript")
+    await new Promise(r => setTimeout(r, 500))
+    await runMacAutomation(`tell application "System Events" to key code 49`, "applescript")
+    return `▶️ Playing: ${url}`
+}
+
 async function dispatchTool(name, args) {
     logger.info({ tool: name, args }, "adminAgent: tool call")
     if (COMPUTER_TOOLS.has(name)) return await computerTool.dispatch(name, args)
     switch (name) {
-        case "run_shell":     return await runShell(args.command)
-        case "mac_automation": return await runMacAutomation(args.script, args.type)
+        case "run_shell":      return await runShell(args.command)
+        case "mac_automation":  return await runMacAutomation(args.script, args.type)
+        case "open_in_chrome":  return await runMacAutomation(`tell application "Google Chrome" to open location "${args.url}"`, "applescript")
+        case "chrome_js":       return await runMacAutomation(`tell application "Google Chrome" to execute front window's active tab javascript "${(args.js||args.code||"").replace(/"/g,"'")}"`, "applescript")
         case "query_db":      return queryDb(args.sql)
         case "update_order":  return updateOrder(args.order_id, args.delivery_status, args.payment_status)
         case "send_whatsapp": return await sendWhatsapp(args.phone, args.message)
@@ -678,6 +741,8 @@ async function dispatchTool(name, args) {
         case "npm_install":   return await npmInstall(args.packages)
         case "run_node":      return await runNode(args.path)
         case "list_tools":    return listTools()
+        case "youtube_play":   return await youtubePlay(args.url)
+        case "run_skill":     return await runSkill(args.skill, args.task)
         default:              return `❌ Unknown tool: ${name}`
     }
 }
@@ -720,7 +785,10 @@ CORE BEHAVIOUR:
 - For web search, always use DuckDuckGo (https://html.duckduckgo.com/html/?q=) instead of Google — Google blocks all scrapers. Use write_file + run_node with axios+cheerio to fetch DuckDuckGo and parse <a class="result__a"> tags, OR use open_browser to navigate to https://html.duckduckgo.com/html/?q=your+query then scrape_page with selector 'a.result__a'.
 - If you write a script and it errors, read the error, fix the script with write_file, and run_node again.
 - Never give up after one failure. Exhaust all approaches before concluding something is impossible.
-- Be concise in your final summary — just results, no explanation of what you tried.
+- OPENAI_API_KEY is already injected into every shell command automatically — NEVER tell the user to set it. Just run the script.
+- For skills: call run_skill to load it, then run the scripts with run_shell python3 or run_node. The API key is already available.
+- Never refuse to run a Python script. python3, pip3, and uv are all allowed.
+- CRITICAL: When a skill provides a bundled script (e.g. text_to_speech.py), ALWAYS run that exact script with run_shell. NEVER write a new Python script to replace it. The bundled script is correct — just call it with the right arguments.
 
 SELF-HEALING EXAMPLES:
 - Web search → always use DuckDuckGo https://html.duckduckgo.com/html/?q=your+query, parse <a class="result__a"> tags with cheerio
@@ -729,16 +797,22 @@ SELF-HEALING EXAMPLES:
 - API needs a key you don't have → use an alternative free API or scrape a different source
 
 BROWSER AUTOMATION RULES — ALWAYS FOLLOW:
-1. After open_browser or navigate, ALWAYS call get_dom before interacting.
-2. get_dom returns a numbered list of every input/button/link on the page.
-3. Use type_by_index and click_by_index with those numbers — NEVER guess CSS selectors.
-4. If get_dom shows no elements, call screenshot to see what's on screen, then wait and retry get_dom.
-5. For login flows: open_browser → get_dom → type_by_index username → type_by_index password → click_by_index submit → screenshot to verify → close_browser → return summary.
-6. Once you have taken a screenshot and completed the task, call close_browser and return your final answer immediately. Do NOT keep clicking or exploring after the task is done.
-7. For tasks in the user's Chrome (YouTube, Gmail, Spotify web): use open_in_chrome to navigate, then chrome_js to read DOM/click/play. NEVER use open_browser for these — it opens a separate Playwright window with no login session.
-8. For YouTube playback: open_in_chrome with the search URL → wait 2s (run_shell sleep 2) → chrome_js to find and click the first playlist link → chrome_js to click the play button.
-
-AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, chrome_js, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, get_dom, type_by_index, click_by_index, write_file, read_file, npm_install, run_node, list_tools`
+1. After open_browser or navigate, ALWAYS call snapshot before interacting.
+2. snapshot returns lines like: link "Title" [ref=e249] or button "Submit" [ref=e12]. Use the ref value with click and fill.
+3. Use fill {ref, text} to type into inputs. Use click {ref} to click. NEVER use type_by_index, click_by_index, or CSS selectors.
+4. If snapshot shows no useful elements, call screenshot to see what's on screen, then wait and retry snapshot.
+5. For login flows: open_browser → snapshot → fill username ref → fill password ref → click submit ref → screenshot to verify → close_browser.
+6. Once task is done, call close_browser and return your final answer immediately.
+7. For YouTube playback use EXACTLY this pattern — do NOT deviate, do NOT take screenshots:
+   Step 1: open_browser → url: "https://www.youtube.com/results?search_query=QUERY" (spaces as +)
+   Step 2: run_shell → sleep 4
+   Step 3: snapshot → (no args) — the output will contain lines like: link "Video Title 3 minutes, 16 seconds" [ref=eXXX]
+   Step 4: click → ref: the eXXX ref of the first video link that has a duration in its name
+   Step 5: get_current_url → REQUIRED — gives you the youtube.com/watch?v=... URL. Do NOT skip this step.
+   Step 6: close_browser
+   Step 7: youtube_play → url: "<URL from step 5 or click result>"
+   DONE. youtube_play opens Chrome and starts playback automatically. Never use mac_automation for YouTube.
+AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, chrome_js, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, get_dom, type_by_index, click_by_index, write_file, read_file, npm_install, run_node, list_tools, run_skill`
         },
         { role: "user", content: task }
     ]
@@ -793,6 +867,10 @@ AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsap
             const result = await dispatchTool(tc.function.name, args)
 
             if (tc.function.name === "screenshot" && result?.imagePath) {
+                if (!fs.existsSync(result.imagePath)) {
+                    toolResults.push({ role: "tool", tool_call_id: tc.id, content: "Screenshot failed: file not written" })
+                    continue
+                }
                 await sendScreenshotToAdmin(result.imagePath)
                 const imgB64 = fs.readFileSync(result.imagePath).toString("base64")
                 toolResults.push({ role: "tool", tool_call_id: tc.id, content: result.text })
