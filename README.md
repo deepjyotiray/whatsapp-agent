@@ -147,7 +147,7 @@ The admin agent uses a separate `admin.agent_llm` block (OpenAI only, supports t
 
 ### Session Memory
 
-Every customer has a 30-minute rolling conversation window. Follow-up messages carry full context. If a customer is mid-conversation with the support agent, short follow-up words ("Yes", "Okay", "Cancel it") skip the restaurant agent and go straight to support.
+Every customer has a 30-minute rolling conversation window. Follow-up messages carry full context. Short follow-up words ("Yes", "Okay", "Cancel it") are kept with the agent that last responded — they never jump to the next agent in the chain. Escalation only happens when the customer explicitly requests it ("talk to human", "manager", "real person") or the current agent cannot handle the message.
 
 ### Support Agent
 

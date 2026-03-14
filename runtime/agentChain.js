@@ -8,7 +8,7 @@ const { sanitize }      = require("../gateway/sanitizer")
 const { parseIntent }   = require("../gateway/intentParser")
 const { evaluate, isInDomain } = require("../gateway/policyEngine")
 const { isAdmin, parseAdminMessage, handleAdmin } = require("../gateway/admin")
-const { addTurn }       = require("./sessionMemory")
+const { addTurn, getLastAgent } = require("./sessionMemory")
 const executor          = require("./executor")
 const logger            = require("../gateway/logger")
 
@@ -71,14 +71,12 @@ class AgentChain {
             const agentName = manifest.agent.name
             const skipDomainGate = manifest.agent.skip_domain_gate === true
 
-            // If customer has an active support session, short/ambiguous messages
-            // go straight to support agent — they're follow-ups, not new intents
-            if (manifest.agent.domain !== "support") {
-                const { getHistory } = require("./sessionMemory")
-                const history = getHistory(phone)
+            // If a previous agent handled this session, keep follow-ups with that agent
+            const lastAgent = getLastAgent(phone)
+            if (lastAgent && lastAgent !== agentName) {
                 const wordCount = message.trim().split(/\s+/).length
-                if (history.length > 0 && wordCount <= 3) {
-                    logger.info({ phone, agent: agentName }, "chain: active support session, skipping to support")
+                if (wordCount <= 3) {
+                    logger.info({ phone, agent: agentName, lastAgent }, "chain: follow-up, staying with last agent")
                     continue
                 }
             }
@@ -120,7 +118,7 @@ class AgentChain {
                 const response = await executor.execute(manifest, intent, { phone, rawMessage: message })
                 if (response !== null && response !== undefined) {
                     // Store in session memory for support context
-                    addTurn(phone, message, response)
+                    addTurn(phone, message, response, agentName)
                     logger.info({ phone, agent: agentName }, "chain: responded")
                     return response
                 }
