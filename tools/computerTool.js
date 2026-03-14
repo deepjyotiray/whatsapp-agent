@@ -157,8 +157,25 @@ async function getCurrentUrl() {
 
 async function openInChrome(url) {
     return new Promise(resolve => {
-        exec(`open -a "Google Chrome" "${url}"`, err =>
+        // Open in user's real Chrome (default profile, logged-in accounts)
+        const script = `tell application "Google Chrome"
+  activate
+  if (count of windows) = 0 then make new window
+  set URL of active tab of front window to "${url}"
+end tell`
+        exec(`osascript -e '${script.replace(/'/g, "'\''")}'`, err =>
             resolve(err ? `❌ ${err.message}` : `✅ Opened ${url} in Chrome`)
+        )
+    })
+}
+
+// Execute JS in the real Chrome tab via AppleScript — reads DOM, clicks, etc.
+function chromeJs(js) {
+    return new Promise(resolve => {
+        const escaped = js.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/'/g, "'\\''")
+        const script = `tell application "Google Chrome" to execute active tab of front window javascript "${escaped}"`
+        exec(`osascript -e '${script}'`, { timeout: 15000 }, (err, stdout) =>
+            resolve(err ? `❌ ${err.message}` : (stdout.trim() || '✅ Done'))
         )
     })
 }
@@ -182,6 +199,7 @@ async function dispatch(name, args) {
         case "wait_for_element":  return await waitForSelector(args.selector)
         case "get_current_url":   return await getCurrentUrl()
         case "open_in_chrome":    return await openInChrome(args.url)
+        case "chrome_js":          return await chromeJs(args.js)
         case "close_browser":     await closeBrowser(); return "✅ Browser closed"
         default:                  return `❌ Unknown computer tool: ${name}`
     }

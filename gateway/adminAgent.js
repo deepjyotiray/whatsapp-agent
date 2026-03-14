@@ -155,11 +155,23 @@ const TOOL_DEFINITIONS = [
         type: "function",
         function: {
             name: "open_in_chrome",
-            description: "Open a URL in the user's visible Chrome browser using AppleScript. Use this when the task involves playing media, using the user's logged-in accounts (YouTube, Spotify web, etc.), or when the user says 'in Chrome'. After opening, use get_dom + click_by_index to interact with the page.",
+            description: "Open a URL in the user's real Chrome browser (default profile, logged-in accounts). Use this for YouTube, Gmail, or any task needing the user's session. Reuses the existing Chrome window — does NOT open a new window.",
             parameters: {
                 type: "object",
-                properties: { url: { type: "string", description: "Full URL to open" } },
+                properties: { url: { type: "string" } },
                 required: ["url"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "chrome_js",
+            description: "Execute JavaScript in the active tab of the user's real Chrome browser. Use after open_in_chrome to read the DOM, click elements, get page title, extract links, or trigger playback. Example: document.querySelector('a#video-title').click()",
+            parameters: {
+                type: "object",
+                properties: { js: { type: "string", description: "JavaScript to execute in Chrome's active tab" } },
+                required: ["js"]
             }
         }
     },
@@ -633,7 +645,7 @@ async function serverHealth() {
 // ── Tool dispatcher ───────────────────────────────────────────────────────────
 
 const COMPUTER_TOOLS = new Set([
-    "open_browser", "open_in_chrome", "navigate", "screenshot", "click",
+    "open_browser", "open_in_chrome", "chrome_js", "navigate", "screenshot", "click",
     "type_text", "press_key", "read_page", "scrape_page", "scroll",
     "wait_for_element", "get_current_url", "close_browser",
     "get_dom", "type_by_index", "click_by_index"
@@ -723,10 +735,10 @@ BROWSER AUTOMATION RULES — ALWAYS FOLLOW:
 4. If get_dom shows no elements, call screenshot to see what's on screen, then wait and retry get_dom.
 5. For login flows: open_browser → get_dom → type_by_index username → type_by_index password → click_by_index submit → screenshot to verify → close_browser → return summary.
 6. Once you have taken a screenshot and completed the task, call close_browser and return your final answer immediately. Do NOT keep clicking or exploring after the task is done.
-7. For media tasks (play YouTube, Spotify, etc.): use mac_automation with AppleScript to open the URL in Chrome (e.g. 'tell app "Google Chrome" to open location "URL"'), then ALSO use open_browser + navigate to the same URL so you can interact with get_dom + click_by_index to actually click the first result and start playback. Never just search and stop — always click through to play.
-8. Never open a new Chrome window with open_in_chrome AND also open_browser for the same task — pick one approach. For tasks requiring the user's logged-in Chrome (YouTube, Gmail), use mac_automation AppleScript only.
+7. For tasks in the user's Chrome (YouTube, Gmail, Spotify web): use open_in_chrome to navigate, then chrome_js to read DOM/click/play. NEVER use open_browser for these — it opens a separate Playwright window with no login session.
+8. For YouTube playback: open_in_chrome with the search URL → wait 2s (run_shell sleep 2) → chrome_js to find and click the first playlist link → chrome_js to click the play button.
 
-AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, get_dom, type_by_index, click_by_index, write_file, read_file, npm_install, run_node, list_tools`
+AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, chrome_js, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, get_dom, type_by_index, click_by_index, write_file, read_file, npm_install, run_node, list_tools`
         },
         { role: "user", content: task }
     ]
