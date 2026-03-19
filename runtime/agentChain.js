@@ -4,151 +4,135 @@ const fs   = require("fs")
 const yaml = require("js-yaml")
 const path = require("path")
 
-const { sanitize }      = require("../gateway/sanitizer")
-const { parseIntent }   = require("../gateway/intentParser")
-const { evaluate, isInDomain } = require("../gateway/policyEngine")
+const { sanitize }                       = require("../gateway/sanitizer")
+const { routeCustomerMessage }           = require("../gateway/customerRouter")
 const { isAdmin, parseAdminMessage, handleAdmin } = require("../gateway/admin")
-const { addTurn, getLastAgent } = require("./sessionMemory")
-const executor          = require("./executor")
-const logger            = require("../gateway/logger")
+const { getGovernanceSnapshot }          = require("../gateway/adminGovernance")
+const cartStore                          = require("../tools/cartStore")
+const executor                           = require("./executor")
+const logger                             = require("../gateway/logger")
+const { addTurn }                        = require("./sessionMemory")
+
+function isSupportMenuReply(message) {
+    const text = String(message || "").trim()
+    return text === "0" || /^[1-5]$/.test(text)
+}
 
 class AgentChain {
     constructor() {
-        this._agents = []   // ordered list of loaded manifests
-        this._ready  = false
+        this._manifest = null
+        this._ready    = false
     }
 
-    /**
-     * Load primary manifest and recursively load any chained agents.
-     * @param {string} manifestPath
-     */
     loadAgent(manifestPath) {
-        this._agents = []
-        this._loadManifest(path.resolve(manifestPath))
-        this._ready = true
-        logger.info({ chain: this._agents.map(a => a.agent.name) }, "chain: loaded")
-    }
-
-    _loadManifest(resolved) {
+        const resolved = path.resolve(manifestPath)
         if (!fs.existsSync(resolved)) throw new Error(`Manifest not found: ${resolved}`)
-        const manifest = yaml.load(fs.readFileSync(resolved, "utf8"))
-        if (!manifest.agent?.name) throw new Error(`Manifest missing agent.name: ${resolved}`)
-        if (!manifest.intents)     throw new Error(`Manifest missing intents: ${resolved}`)
-        if (!manifest.tools)       throw new Error(`Manifest missing tools: ${resolved}`)
-        this._agents.push(manifest)
-
-        // Recursively load chained agents
-        const chain = manifest.agent.chain || []
-        for (const chainPath of chain) {
-            this._loadManifest(path.resolve(chainPath))
-        }
+        this._manifest = yaml.load(fs.readFileSync(resolved, "utf8"))
+        if (!this._manifest.agent?.name) throw new Error("Manifest missing agent.name")
+        if (!this._manifest.intents)     throw new Error("Manifest missing intents")
+        if (!this._manifest.tools)       throw new Error("Manifest missing tools")
+        this._ready = true
+        logger.info({ agent: this._manifest.agent.name }, "chain: loaded")
     }
 
-    /**
-     * Run the full secure pipeline, escalating through the chain on null response.
-     * @param {string} message
-     * @param {string} phone
-     * @returns {Promise<string|null>}
-     */
     async execute(message, phone) {
         if (!this._ready) throw new Error("AgentChain: call loadAgent() first.")
 
-        // 0. Admin intercept — runs once, before any agent
+        // 0. Admin intercept
         if (isAdmin(phone)) {
             const admin = parseAdminMessage(message)
             if (admin.isAdmin) return await handleAdmin(admin.payload)
         }
 
-        // 1. Sanitizer — runs once
+        // 1. Sanitizer
         const sanity = sanitize(message)
         if (!sanity.safe) {
             logger.warn({ phone, reason: sanity.reason }, "chain: sanitizer blocked")
             return "Your message could not be processed."
         }
 
-        // Run through each agent in the chain
-        for (const manifest of this._agents) {
-            const agentName = manifest.agent.name
-            const skipDomainGate = manifest.agent.skip_domain_gate === true
+        // 2. Active session check — skip LLM entirely
+        const activeCart    = cartStore.get(phone)
+        const activeSupport = cartStore.get(`support:${phone}`)
 
-            // Short follow-ups (≤3 words) stay with the last agent that responded
-            // BUT only if the message has no domain keywords — explicit menu/order queries always go to restaurant-agent
-            const lastAgent = getLastAgent(phone)
-            if (lastAgent && lastAgent !== agentName) {
-                const wordCount = message.trim().split(/\s+/).length
-                if (wordCount <= 3 && !isInDomain(message)) {
-                    logger.info({ phone, agent: agentName, lastAgent }, "chain: follow-up, staying with last agent")
-                    continue
+        if (activeCart && activeCart.state === "support_handoff") {
+            // user picked support from order menu — clear order cart, route to support
+            cartStore.clear(phone)
+            return await executor.execute(this._manifest, { intent: "support", filter: {} }, { phone, rawMessage: message })
+        }
+
+        if (activeCart) {
+            return await executor.execute(this._manifest, { intent: "place_order", filter: {} }, { phone, rawMessage: message })
+        }
+
+        if (activeSupport) {
+            if (activeSupport.state === "menu" && !isSupportMenuReply(message)) {
+                try {
+                    const reroute = await routeCustomerMessage(message, this._manifest)
+                    if (reroute.intent && reroute.intent !== "support") {
+                        cartStore.clear(`support:${phone}`)
+                    } else {
+                        return await executor.execute(this._manifest, { intent: "support", filter: {} }, { phone, rawMessage: message })
+                    }
+                } catch {
+                    cartStore.clear(`support:${phone}`)
                 }
-            }
-            // 2. Domain gate — skipped for agents that declare skip_domain_gate: true
-            if (!skipDomainGate) {
-                const wordCount = message.trim().split(/\s+/).length
-                if (wordCount > 3 && !isInDomain(message)) {
-                    logger.info({ phone, agent: agentName }, "chain: out of domain, trying next agent")
-                    continue  // pass to next agent in chain
-                }
-            }
-
-            // 3. Intent parser — LLM as translator only, reads intents from manifest
-            let intent
-            try {
-                const allowedIntents = Object.keys(manifest.intents)
-                const intentHints    = manifest.intent_hints || {}
-                intent = await parseIntent(message, allowedIntents, intentHints)
-            } catch (err) {
-                logger.error({ phone, err }, "chain: intent parser error")
-                continue
-            }
-
-            // Support agent bypasses policy — it handles everything the restaurant agent couldn't
-            if (manifest.agent.domain === "support") {
-                intent = { intent: "support", parameters: {} }
             } else {
-                // 4. Policy engine — only for non-support agents
-                const policy = evaluate(intent)
-                if (!policy.allowed) {
-                    logger.info({ phone, agent: agentName, intent: intent.intent }, "chain: policy blocked, trying next")
-                    // restricted_intent on primary agent — still pass to support, don't hard block
-                    continue
-                }
-            }
-
-            // 5. Execute tool
-            try {
-                const response = await executor.execute(manifest, intent, { phone, rawMessage: message })
-                if (response !== null && response !== undefined) {
-                    // Store in session memory for support context
-                    addTurn(phone, message, response, agentName)
-                    logger.info({ phone, agent: agentName }, "chain: responded")
-                    return response
-                }
-                // null = this agent couldn't handle it, try next
-                logger.info({ phone, agent: agentName }, "chain: no response, escalating to next agent")
-            } catch (err) {
-                logger.error({ phone, agent: agentName, err }, "chain: executor error")
-                continue
+                return await executor.execute(this._manifest, { intent: "support", filter: {} }, { phone, rawMessage: message })
             }
         }
 
-        // All agents exhausted
-        return this._agents[0]?.agent?.out_of_domain_message || "Sorry, I can only help with food orders and related queries."
+        // 3. Intent router — manifest-driven business classification
+        let intent, filter
+        try {
+            const result = await routeCustomerMessage(message, this._manifest)
+            intent = result.intent
+            filter = result.filter || {}
+        } catch {
+            intent = "general_chat"
+            filter = {}
+        }
+
+        logger.info({ phone, intent }, "chain: intent parsed")
+
+        // 4. Guard — fallback to public concierge if route is unknown
+        if (!this._manifest.intents[intent]) {
+            intent = this._manifest.intents.general_chat ? "general_chat" : "place_order"
+        }
+
+        // 5. Execute
+        try {
+            const response = await executor.execute(this._manifest, { intent, filter }, { phone, rawMessage: message })
+            if (response !== null && response !== undefined) {
+                addTurn(phone, message, response, intent)
+                return response
+            }
+        } catch (err) {
+            logger.error({ phone, intent, err }, "chain: executor error")
+        }
+
+        return this._manifest.agent.error_message || "Something went wrong. Please try again."
     }
 
     getCapabilities() {
         if (!this._ready) return { ready: false }
-        return this._agents.map(m => ({
-            agent:   m.agent.name,
-            domain:  m.agent.domain,
-            intents: Object.keys(m.intents),
-            tools:   Object.keys(m.tools),
-        }))
+        const governance = getGovernanceSnapshot()
+        return {
+            agent:   this._manifest.agent.name,
+            intents: Object.keys(this._manifest.intents),
+            tools:   Object.keys(this._manifest.tools),
+            governance: {
+                role: governance.role,
+                workerCount: Object.keys(governance.workers || {}).length,
+                governedToolCount: Object.keys(governance.tools || {}).length,
+            },
+        }
     }
 
     healthCheck() {
         return {
             status:    this._ready ? "ok" : "no_agent",
-            agents:    this._agents.map(a => a.agent.name),
+            agent:     this._manifest?.agent?.name,
             timestamp: new Date().toISOString(),
         }
     }

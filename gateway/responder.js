@@ -8,6 +8,11 @@ Answer using ONLY the provided menu data. Be concise and well formatted.
 Do NOT make up items or prices. If nothing matches, say so clearly.`
 
 async function generateResponse(userQuery, ragData, systemPrompt) {
+    // If RAG already returned a structured menu list, return it directly — no LLM
+    if (ragData && (ragData.includes("₹") || ragData.includes("Menu not available") || ragData.includes("No ") )) {
+        return ragData
+    }
+
     const prompt = `${systemPrompt || DEFAULT_SYSTEM_PROMPT}
 
 Customer question: ${userQuery}

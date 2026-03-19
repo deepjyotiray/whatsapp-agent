@@ -8,7 +8,11 @@ const settings = require("../config/settings.json")
 const AGENT_URL    = `http://127.0.0.1:${settings.api.port}/send`
 const AGENT_SECRET = settings.api.secret
 
-function getDb(dbPath) { return new Database(dbPath, { readonly: true }) }
+function getDb(dbPath) {
+    const db = new Database(dbPath, { readonly: true })
+    db.pragma("busy_timeout = 5000")
+    return db
+}
 
 function normalisePhone(phone) {
     return String(phone).replace(/@.*$/, "").replace(/\D/g, "").slice(-10)

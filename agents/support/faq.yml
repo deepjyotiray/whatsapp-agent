@@ -2,7 +2,7 @@ faqs:
   - topic: wrong_order
     keywords: [wrong, incorrect, missing, item, got, received, not what]
     answer: |
-      We're really sorry about that! 😔 Wrong or missing items are rare but we take them seriously.
+      We're really sorry about that! Wrong or missing items are rare but we take them seriously.
       Please describe what was wrong and we'll make it right. If you'd like to speak to someone directly, just say "talk to human".
 
   - topic: late_delivery
@@ -15,25 +15,25 @@ faqs:
     keywords: [refund, money back, cancel, cancellation, return, charge, overcharged]
     answer: |
       We process refunds for valid cases within 3-5 business days to your original payment method.
-      For cancellations — orders can only be cancelled before they enter preparation. Please say "talk to human" and we'll check your order status and process accordingly.
+      For cancellations, orders can only be cancelled before they enter preparation. Please say "talk to human" and we'll check your order status and process accordingly.
 
   - topic: food_quality
     keywords: [bad, stale, taste, quality, cold, undercooked, overcooked, spoiled, smell]
     answer: |
       We're so sorry to hear that! Food quality is our top priority and this is unacceptable.
-      Please describe the issue and say "talk to human" — we'll personally follow up and make it right.
+      Please describe the issue and say "talk to human" so we can personally follow up and make it right.
 
   - topic: allergy
     keywords: [allergy, allergic, intolerance, gluten, dairy, nut, peanut, lactose, vegan]
     answer: |
-      Your safety is our priority. 🙏
+      Your safety is our priority.
       All our meals are prepared fresh in a home kitchen. We can accommodate most dietary requirements with advance notice.
       Please mention your allergy when placing your order in the notes field, or say "talk to human" to speak with us directly before ordering.
 
   - topic: bulk_order
     keywords: [bulk, corporate, office, event, party, large, catering, group]
     answer: |
-      We love catering for events and offices! 🎉
+      We love catering for events and offices.
       For bulk orders (10+ meals), please visit https://healthymealspot.com or say "talk to human" and we'll put together a custom quote for you.
 
   - topic: payment_issue
@@ -46,27 +46,24 @@ faqs:
     keywords: [deliver, area, location, pincode, zone, available, serviceable]
     answer: |
       We currently deliver within a limited radius from our kitchen. You can check if your area is serviceable when placing an order at https://healthymealspot.com.
-      If you're just outside our zone, say "talk to human" — we sometimes make exceptions for regular customers! 😊
+      If you're just outside our zone, say "talk to human". We sometimes make exceptions for regular customers.
 
   - topic: ordering
     keywords: [how to order, place order, website, app, order online]
     answer: |
-      Ordering is easy! Visit https://healthymealspot.com, browse the menu, and place your order.
-      You'll receive a WhatsApp confirmation with your invoice and payment QR code right here. 🍽️
+      Ordering is easy. Visit https://healthymealspot.com, browse the menu, and place your order.
+      You'll receive a WhatsApp confirmation with your invoice and payment QR code right here.
 
   - topic: timings
     keywords: [timing, open, close, hours, when, available, lunch, dinner, breakfast]
     answer: |
-      We prepare fresh meals daily. Our menu and availability is updated on the website each morning.
+      We prepare fresh meals daily. Our menu and availability are updated on the website each morning.
       Check today's menu by asking "show menu" or visit https://healthymealspot.com.
 
 escalation_triggers:
   - talk to human
   - speak to someone
   - contact support
-  - need help
   - real person
-  - agent
   - manager
   - call me
-  - phone number

@@ -1,30 +1,26 @@
 agent:
   name: restaurant-agent
   domain: food
-  version: "1.0.0"
-  description: "Ray's Home Kitchen — WhatsApp AI assistant"
-  chain:
-    - agents/support.yml
-
-  greet_message: "👋 Welcome to Ray's Home Kitchen!\n\nI can help you with:\n• View today's menu\n• Check your order status\n\nWhat would you like?"
-  help_message: "You can ask me to:\n• Show the menu\n• Check your order status"
-  out_of_domain_message: "Sorry, I can only help with food orders and menu queries."
-  restricted_message: "Sorry, I cannot perform that request."
+  version: "2.0.0"
+  description: "Ray's Home Kitchen — WhatsApp assistant"
   error_message: "Something went wrong. Please try again."
+  out_of_domain_message: "I can still help in a Ray's Home Kitchen way. Ask me about dishes, prices, ordering, support, or even what sounds good to eat today."
 
 intent_hints:
-  greet: "customer says hi, hello, hey, good morning, namaste, or any greeting"
-  help: "customer asks what can you do, how does this work, or asks for help"
-  show_menu: "customer asks about food, menu, items, prices, veg, non-veg, today's special, what's available"
-  order_status: "customer asks about their order, delivery, payment, invoice, receipt, QR code, when will it arrive"
+  greet: "customer says hi, hello, thanks, bye, or starts a casual conversation"
+  general_chat: "customer asks a general question, recommendation, craving, weather, or small-talk that should still be answered in a business-aware way"
+  show_menu: "customer asks about menu items, dishes, availability, prices, veg or non-veg options, offers, nutrition, or what is available"
+  order_status: "customer asks about an existing order, payment, invoice, receipt, qr code, delivery status, eta, or resend"
+  place_order: "customer wants to buy, order, add to cart, checkout, or start placing an order"
+  support: "customer has a problem, complaint, refund request, wrong item, missing item, allergy issue, late delivery, or wants a human"
 
 intents:
   greet:
-    tool: static_greet
+    tool: concierge
     auth_required: false
 
-  help:
-    tool: static_help
+  general_chat:
+    tool: concierge
     auth_required: false
 
   show_menu:
@@ -35,27 +31,51 @@ intents:
     tool: order_lookup
     auth_required: false
 
-tools:
-  static_greet:
-    type: static
+  place_order:
+    tool: order_create
+    auth_required: false
 
-  static_help:
-    type: static
+  support:
+    tool: support_faq
+    auth_required: false
+
+  unknown:
+    tool: concierge
+    auth_required: false
+
+tools:
+  concierge:
+    type: business_chat
+    business_name: "Ray's Home Kitchen"
+    cuisine: "home-style Indian food"
+    tone: "warm, sharp, and naturally business-aware"
+    greeting: "Welcome to Ray's Home Kitchen."
+    signature_line: "If you're hungry, I can also suggest something from today's menu."
+    db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
 
   rag_menu:
     type: rag
     db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
-    table: restaurant
     system_prompt: |
-      You are a helpful assistant for Ray's Home Kitchen, a home-cooked food delivery service.
+      You are a helpful assistant for Ray's Home Kitchen.
       Answer using ONLY the provided menu data. Be concise and well formatted.
       Only include items relevant to what was asked. Do NOT make up items or prices.
       If nothing matches, say so clearly.
+
+  order_create:
+    type: order_create
+    db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
+    backend_url: "http://localhost:3000"
 
   order_lookup:
     type: sqlite
     db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
     upi_handle: "XXXXXXXXXX@pthdfc"
-    website: "yourdomain.com"
-    brand_label: "yourdomain.com"
+    website: "healthymealspot.com"
+    brand_label: "healthymealspot.com"
     country_code: "91"
+
+  support_faq:
+    type: support
+    db_path: "/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db"
+    escalation_phone: "+919594614752"

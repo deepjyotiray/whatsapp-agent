@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "seed": "node vector.js"
+    "setup": "node setup/index.js",
+    "promote": "node setup/promote.js",
+    "seed": "node vector.js",
+    "test": "node test/menu.test.js && node test/agent.test.js"
   },
   "keywords": [],
   "author": "",

@@ -3,6 +3,7 @@
 const path       = require("path")
 const agentChain = require("./runtime/agentChain")
 const { startApi } = require("./transport/api")
+const { start: startHttpConsole } = require("./transports/http")
 
 const agentFlag    = process.argv.indexOf("--agent")
 const manifestPath = agentFlag !== -1 ? process.argv[agentFlag + 1] : "agents/restaurant.yml"
@@ -20,6 +21,7 @@ const transportName = transportFlag !== -1 ? process.argv[transportFlag + 1] : "
 const TRANSPORTS = {
     whatsapp: () => {
         startApi()
+        startHttpConsole()
         const { start } = require("./transports/whatsapp")
         return start()
     },

@@ -5,6 +5,9 @@ const Database = require("better-sqlite3")
 const settings = require("../config/settings.json")
 const { complete } = require("../providers/llm")
 const { runAgentLoop } = require("./adminAgent")
+const { approveRequest, listApprovals } = require("./adminApprovals")
+const { getActiveWorkspace } = require("../core/workspace")
+const { loadProfile } = require("../setup/profileService")
 const logger = require("./logger")
 
 const DB_PATH = settings.admin.db_path
@@ -62,8 +65,9 @@ function runShell(cmd) {
 
 // ── DB context builder ────────────────────────────────────────────────────────
 
-function buildDbContext() {
-    const db = new Database(DB_PATH, { readonly: true })
+function buildDbContext(workspaceId) {
+    const dbPath = loadProfile(workspaceId).dbPath || DB_PATH
+    const db = new Database(dbPath, { readonly: true })
     try {
         const now = new Date()
         const thisMonth = now.toISOString().slice(0, 7)   // YYYY-MM
@@ -173,16 +177,32 @@ Answer:`
 
 // ── Main handler ──────────────────────────────────────────────────────────────
 
-async function handleAdmin(payload) {
+async function handleAdmin(payload, options = {}) {
     if (!payload) return "⚙️ Admin ready. Usage: `ray <pin> <command or question>`\n`ray <pin> agent <task>` for full agentic mode"
+    const workspaceId = options.workspaceId || getActiveWorkspace()
 
     logger.info({ payload }, "admin: handling request")
+
+    if (/^approvals\b/i.test(payload)) {
+        const approvals = listApprovals("pending", workspaceId)
+        if (!approvals.length) return "No pending approvals."
+        return approvals.slice(0, 10).map(a =>
+            `• ${a.id} | workspace: ${a.workspaceId} | tool: ${a.tool} | worker: ${a.worker} | created: ${a.createdAt}\n  task: ${a.task}`
+        ).join("\n\n")
+    }
+
+    if (/^approve\s+/i.test(payload)) {
+        const id = payload.replace(/^approve\s+/i, "").trim()
+        const approval = approveRequest(id, workspaceId)
+        if (!approval) return `Approval ${id} not found.`
+        return `✅ Approved ${approval.id} for ${approval.tool}.\nRerun the task and include token ${approval.id} in the request.`
+    }
 
     // Agentic mode — full OpenAI function-calling loop
     if (/^agent\s+/i.test(payload)) {
         const task = payload.replace(/^agent\s+/i, "").trim()
         logger.info({ task }, "admin: agentic mode")
-        return await runAgentLoop(task)
+        return await runAgentLoop(task, { workspaceId })
     }
 
     if (looksLikeShell(payload)) {
@@ -191,7 +211,7 @@ async function handleAdmin(payload) {
     }
 
     // Natural language — build DB context and ask LLM
-    const dbContext = buildDbContext()
+    const dbContext = buildDbContext(workspaceId)
     return await queryWithLlm(payload, dbContext)
 }
 

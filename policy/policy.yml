@@ -1,8 +1,10 @@
 allowed_intents:
-  - show_menu
-  - help
   - greet
+  - help
+  - show_menu
   - order_status
+  - place_order
+  - general_chat
 
 restricted_intents:
   - create_order
@@ -10,9 +12,15 @@ restricted_intents:
   - login
 
 domain_keywords:
+  - place
+  - want
+  - buy
+  - cart
+  - add
+  - checkout
+  - order
   - food
   - menu
-  - order
   - meal
   - lunch
   - dinner
@@ -35,7 +43,16 @@ domain_keywords:
   - login
   - coupon
   - discount
-  - veg
+  - rice
+  - brown
+  - bread
+  - roti
+  - chapati
+  - paratha
+  - biryani
+  - pulao
+  - thali
+  - starter
   - chicken
   - paneer
   - today

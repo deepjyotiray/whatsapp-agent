@@ -1,38 +1,32 @@
 "use strict"
 
-const fs       = require("fs")
-const yaml     = require("js-yaml")
 const Database = require("better-sqlite3")
+const fetch    = require("node-fetch")
 const settings = require("../config/settings.json")
-const { complete } = require("../providers/llm")
-const { getHistory, addTurn } = require("../runtime/sessionMemory")
+const cart     = require("./cartStore")
 const logger   = require("../gateway/logger")
 
-const AGENT_URL    = `http://127.0.0.1:${settings.api.port}/send`
-const AGENT_SECRET = settings.api.secret
+const SEND_URL    = `http://127.0.0.1:${settings.api.port}/send`
+const SEND_SECRET = settings.api.secret
 
-function loadFaq(faqPath) {
-    return yaml.load(fs.readFileSync(faqPath, "utf8"))
+const MENU = `How can we help you today?\n\n1. Wrong or missing item\n2. Late delivery\n3. Payment issue\n4. Request a refund\n5. Talk to a human\n\nReply with a number, or *0* to go back to main menu.`
+
+const PROMPTS = {
+    1: `Please describe what was wrong or missing with your order.\n\nReply with your message, or *0* to go back.`,
+    2: `Please describe the delivery issue — how long have you been waiting and what was your expected delivery time?\n\nReply with your message, or *0* to go back.`,
+    3: `Please share your UPI transaction ID or describe the payment issue.\n\nReply with your message, or *0* to go back.`,
+    4: `Please describe why you'd like a refund and share your order ID if you have it.\n\nReply with your message, or *0* to go back.`,
+    5: `Please describe your issue and we'll connect you with our team right away.\n\nReply with your message, or *0* to go back.`,
 }
 
-function matchFaq(faqs, message) {
-    const m = message.toLowerCase()
-    let best = null, bestScore = 0
-    for (const faq of faqs) {
-        const score = faq.keywords.reduce((n, kw) => n + (m.includes(kw) ? 1 : 0), 0)
-        if (score > bestScore) { bestScore = score; best = faq }
-    }
-    return bestScore > 0 ? best : null
-}
+const LABELS = { 1: "Wrong/missing item", 2: "Late delivery", 3: "Payment issue", 4: "Refund request", 5: "Talk to human" }
 
-function isEscalationRequest(message, triggers) {
-    const m = message.toLowerCase()
-    return triggers.some(t => m.includes(t.toLowerCase()))
-}
+function normalisePhone(p) { return String(p).replace(/@.*$/, "").replace(/\D/g, "") }
 
 function getCustomerContext(dbPath, phone) {
-    const last10 = String(phone).replace(/@.*$/, "").replace(/\D/g, "").slice(-10)
+    const last10 = normalisePhone(phone).slice(-10)
     const db = new Database(dbPath, { readonly: true })
+    db.pragma("busy_timeout = 5000")
     try {
         const user   = db.prepare("SELECT name FROM users WHERE mobile LIKE ?").get(`%${last10}`)
         const orders = db.prepare(`
@@ -44,61 +38,19 @@ function getCustomerContext(dbPath, phone) {
     } finally { db.close() }
 }
 
-async function askLlm(message, history, faqContext, customerContext, businessName) {
-    const historyText  = history.length
-        ? history.map(h => `${h.role === "customer" ? "Customer" : "Agent"}: ${h.text}`).join("\n")
-        : "No prior conversation."
-    const customerText = customerContext.user
-        ? `Customer name: ${customerContext.user.name}\nRecent orders:\n${customerContext.orders.map(o =>
-            `- ${o.id} | ${o.order_for} | ₹${o.total} | ${o.delivery_status} | ${o.payment_status}`
-          ).join("\n") || "None"}`
-        : "Customer not registered."
-
-    const prompt = `You are a friendly and empathetic customer support agent for ${businessName}, a home-cooked food delivery service.
-Resolve the customer's issue using the FAQ knowledge and their order context below.
-Rules:
-- Be warm, empathetic, and concise
-- Use the customer's name if available
-- Reference their actual order details if relevant
-- If you cannot resolve the issue, tell them to say "talk to human"
-- Never make up policies or promises
-- Do NOT answer anything unrelated to food, orders, or the business
-
-FAQ Knowledge:
-${faqContext}
-
-Customer Context:
-${customerText}
-
-Conversation so far:
-${historyText}
-
-Customer: ${message}
-Agent:`
-
-    try {
-        return await complete(prompt) || null
-    } catch {
-        return null
-    }
-}
-
-async function escalateToAdmin(phone, message, history, customerContext, adminPhone) {
-    const last10  = String(phone).replace(/@.*$/, "").replace(/\D/g, "").slice(-10)
-    const name    = customerContext.user?.name || "Unknown customer"
-    const orders  = customerContext.orders.map(o =>
+async function escalate(phone, issueLabel, issueText, customerContext, adminPhone) {
+    const last10 = normalisePhone(phone).slice(-10)
+    const name   = customerContext.user?.name || "Unknown customer"
+    const orders = customerContext.orders.map(o =>
         `• ${o.id} | ${o.order_for} | ₹${o.total} | ${o.delivery_status} | ${o.payment_status}`
     ).join("\n") || "No recent orders"
-    const convo   = history.length
-        ? history.map(h => `${h.role === "customer" ? "👤" : "🤖"} ${h.text}`).join("\n")
-        : message
-    const adminMsg = `🚨 *Support Escalation*\n\n👤 Customer: ${name} (+${last10})\n\n📦 Recent Orders:\n${orders}\n\n💬 Conversation:\n${convo}\n\n❓ Last message: "${message}"`
-    const to = adminPhone.startsWith("+") ? adminPhone : `+${adminPhone}`
+    const to  = adminPhone.startsWith("+") ? adminPhone : `+${adminPhone}`
+    const msg = `🚨 *Support Request*\n\n👤 ${name} (+${last10})\n📋 Issue: ${issueLabel}\n💬 "${issueText}"\n\n📦 Recent Orders:\n${orders}`
     try {
-        await fetch(AGENT_URL, {
+        await fetch(SEND_URL, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-secret": AGENT_SECRET },
-            body: JSON.stringify({ phone: to, message: adminMsg })
+            headers: { "Content-Type": "application/json", "x-secret": SEND_SECRET },
+            body: JSON.stringify({ phone: to, message: msg })
         })
         logger.info({ phone }, "support: escalated to admin")
     } catch (err) {
@@ -106,37 +58,53 @@ async function escalateToAdmin(phone, message, history, customerContext, adminPh
     }
 }
 
-async function execute(params, context, toolConfig) {
-    const { phone, rawMessage } = context
-    const businessName  = toolConfig.business_name || "the restaurant"
-    const adminPhone    = toolConfig.escalation_phone || settings.admin.number
-    const faqData       = loadFaq(toolConfig.faq_path)
-    const history       = getHistory(phone)
-    const triggers      = faqData.escalation_triggers || []
+async function execute(_params, context, toolConfig) {
+    const { phone, rawMessage: msg } = context
+    const { db_path, escalation_phone } = toolConfig
+    const adminPhone = escalation_phone || settings.admin?.number || ""
+    const text = (msg || "").trim()
+    const n    = parseInt(text, 10)
+    const key  = `support:${phone}`
 
-    if (isEscalationRequest(rawMessage, triggers)) {
-        const customerContext = getCustomerContext(toolConfig.db_path, phone)
-        await escalateToAdmin(phone, rawMessage, history, customerContext, adminPhone)
-        addTurn(phone, rawMessage, null)
-        return "I've notified our team and someone will reach out to you shortly. 🙏\nWe typically respond within 30 minutes during business hours."
+    let c = cart.get(key)
+
+    // No active support session → show menu
+    if (!c) {
+        cart.set(key, { state: "menu" })
+        return MENU
     }
 
-    const customerContext = getCustomerContext(toolConfig.db_path, phone)
-    const faqMatch  = matchFaq(faqData.faqs, rawMessage)
-    const faqContext = faqMatch
-        ? `Most relevant FAQ:\nTopic: ${faqMatch.topic}\n${faqMatch.answer}`
-        : faqData.faqs.map(f => `Topic: ${f.topic}\n${f.answer}`).join("\n---\n")
+    const { state } = c
 
-    const response = await askLlm(rawMessage, history, faqContext, customerContext, businessName)
-
-    if (!response) {
-        await escalateToAdmin(phone, rawMessage, history, customerContext, adminPhone)
-        addTurn(phone, rawMessage, null)
-        return "I wasn't able to resolve this one. I've flagged it to our team and someone will get back to you shortly. 🙏"
+    // Main menu
+    if (state === "menu") {
+        if (n >= 1 && n <= 5) {
+            cart.update(key, { state: "collecting", issueType: n })
+            return PROMPTS[n]
+        }
+        if (text === "0") {
+            cart.clear(key)
+            return null   // back to main home — place_order will show home screen
+        }
+        return `Please reply with a number between 1 and 5.\n\n${MENU}`
     }
 
-    addTurn(phone, rawMessage, response)
-    return response
+    // Collecting issue description
+    if (state === "collecting") {
+        if (text === "0") {
+            cart.update(key, { state: "menu" })
+            return MENU
+        }
+        if (text.length < 3) return "Please describe your issue so we can help you."
+
+        const ctx = getCustomerContext(db_path, phone)
+        await escalate(phone, LABELS[c.issueType], text, ctx, adminPhone)
+        cart.clear(key)
+        return `Thank you! 🙏 We've received your message and our team will get back to you shortly.\n\nWe typically respond within 30 minutes during business hours.`
+    }
+
+    cart.clear(key)
+    return MENU
 }
 
 module.exports = { execute }

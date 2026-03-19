@@ -8,11 +8,31 @@ const fs           = require("fs")
 const settings     = require("../config/settings.json")
 const logger       = require("./logger")
 const computerTool = require("../tools/computerTool")
+const { buildAdminPlan } = require("./adminPlanner")
+const { authorizeToolCall, getGovernanceSnapshot } = require("./adminGovernance")
+const { createApprovalRequest } = require("./adminApprovals")
+const { getActiveWorkspace } = require("../core/workspace")
+const { loadProfile } = require("../setup/profileService")
+const {
+    createTaskState,
+    appendToolCall,
+    setPlan,
+    addNote,
+    setFinalAnswer,
+} = require("./adminTaskState")
+const { getWorker, listWorkers } = require("./adminWorkers")
 
 const DB_PATH      = settings.admin.db_path
 const AGENT_URL    = `http://127.0.0.1:${settings.api.port}/send`
 const AGENT_SECRET = settings.api.secret
 const MAX_TURNS    = 20
+const ROOT_DIR     = path.resolve(__dirname, "..")
+const ADMIN_AUDIT_LOG = path.join(ROOT_DIR, "logs", "admin-agent.audit.log")
+
+function resolveWorkspaceDbPath(workspaceId) {
+    const workspaceProfile = loadProfile(workspaceId)
+    return workspaceProfile.dbPath || settings.admin.db_path
+}
 
 // ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -380,6 +400,14 @@ const TOOL_DEFINITIONS = [
     {
         type: "function",
         function: {
+            name: "list_governance",
+            description: "Show governance policy: current admin role, worker-tool topology, and tool risk rules.",
+            parameters: { type: "object", properties: {} }
+        }
+    },
+    {
+        type: "function",
+        function: {
             name: "youtube_play",
             description: "Open a YouTube watch URL in Chrome and start playback. Use this as the final step for all YouTube tasks instead of mac_automation.",
             parameters: {
@@ -419,6 +447,18 @@ const SHELL_PATTERNS = [
     /^python3\s/i,  /^pip3\s/i,     /^uv\s/i,       /^\.venv\/bin\/python/i,
 ]
 
+const SHELL_DENY_PATTERNS = [
+    /\brm\s+-rf\s+\//i,
+    /\bsudo\b/i,
+    /\bshutdown\b/i,
+    /\breboot\b/i,
+    /\bmkfs\b/i,
+    /\bdd\s+if=/i,
+    /\bchmod\s+-R\s+777\b/i,
+    /\bchown\s+-R\b/i,
+    />\s*\/dev\/sda/i,
+]
+
 const VENV_PYTHON = path.join(__dirname, "../.venv/bin/python3")
 const SHELL_ENV = {
     ...process.env,
@@ -426,10 +466,39 @@ const SHELL_ENV = {
     PATH: `${path.join(__dirname, "../.venv/bin")}:${process.env.PATH || ""}`
 }
 
+function audit(event, details = {}) {
+    try {
+        fs.mkdirSync(path.dirname(ADMIN_AUDIT_LOG), { recursive: true })
+        fs.appendFileSync(ADMIN_AUDIT_LOG, JSON.stringify({
+            ts: new Date().toISOString(),
+            event,
+            ...details,
+        }) + "\n")
+    } catch (err) {
+        logger.error({ err }, "adminAgent: audit log failed")
+    }
+}
+
+function isSafeCommand(cmd) {
+    if (!SHELL_PATTERNS.some(p => p.test(cmd.trim()))) return { ok: false, reason: `Command not allowed: ${cmd.split(" ")[0]}` }
+    if (SHELL_DENY_PATTERNS.some(p => p.test(cmd))) return { ok: false, reason: "Command blocked by safety policy." }
+    return { ok: true }
+}
+
+function resolveWorkspacePath(inputPath) {
+    const abs = path.resolve(ROOT_DIR, inputPath)
+    if (!abs.startsWith(ROOT_DIR + path.sep) && abs !== ROOT_DIR) {
+        throw new Error("Path must stay inside the project workspace.")
+    }
+    return abs
+}
+
 function runShell(cmd) {
     return new Promise(resolve => {
-        if (!SHELL_PATTERNS.some(p => p.test(cmd.trim()))) {
-            resolve(`❌ Command not allowed: ${cmd.split(" ")[0]}`)
+        const safety = isSafeCommand(cmd)
+        audit("run_shell", { command: cmd, allowed: safety.ok })
+        if (!safety.ok) {
+            resolve(`❌ ${safety.reason}`)
             return
         }
         exec(cmd, { timeout: 30000, env: SHELL_ENV }, (err, stdout, stderr) => {
@@ -441,9 +510,9 @@ function runShell(cmd) {
 
 // ── Tool implementations ──────────────────────────────────────────────────────
 
-function queryDb(sql) {
+function queryDb(sql, workspaceId) {
     if (!/^\s*SELECT\s/i.test(sql)) return "❌ Only SELECT queries are allowed."
-    const db = new Database(DB_PATH, { readonly: true })
+    const db = new Database(resolveWorkspaceDbPath(workspaceId), { readonly: true })
     try {
         const rows = db.prepare(sql).all()
         if (!rows.length) return "No results."
@@ -457,8 +526,8 @@ function queryDb(sql) {
     }
 }
 
-function updateOrder(orderId, deliveryStatus, paymentStatus) {
-    const db = new Database(DB_PATH)
+function updateOrder(orderId, deliveryStatus, paymentStatus, workspaceId) {
+    const db = new Database(resolveWorkspaceDbPath(workspaceId))
     try {
         const sets = [], vals = []
         if (deliveryStatus) { sets.push("delivery_status = ?"); vals.push(deliveryStatus) }
@@ -599,9 +668,10 @@ async function recon(url) {
 
 function writeFile(filePath, content) {
     try {
-        const abs = path.resolve(__dirname, "..", filePath)
+        const abs = resolveWorkspacePath(filePath)
         fs.mkdirSync(path.dirname(abs), { recursive: true })
         fs.writeFileSync(abs, content, "utf8")
+        audit("write_file", { path: abs, bytes: Buffer.byteLength(content, "utf8") })
         return `✅ Written: ${abs}`
     } catch (err) {
         return `❌ Write failed: ${err.message}`
@@ -610,7 +680,8 @@ function writeFile(filePath, content) {
 
 function readFile(filePath) {
     try {
-        const abs = path.resolve(__dirname, "..", filePath)
+        const abs = resolveWorkspacePath(filePath)
+        audit("read_file", { path: abs })
         return fs.readFileSync(abs, "utf8").slice(0, 4000)
     } catch (err) {
         return `❌ Read failed: ${err.message}`
@@ -629,8 +700,15 @@ function npmInstall(packages) {
 
 function runNode(filePath) {
     return new Promise(resolve => {
-        const abs = path.resolve(__dirname, "..", filePath)
-        const cwd = path.resolve(__dirname, "..")
+        let abs
+        try {
+            abs = resolveWorkspacePath(filePath)
+        } catch (err) {
+            resolve(`❌ ${err.message}`)
+            return
+        }
+        const cwd = ROOT_DIR
+        audit("run_node", { path: abs })
         exec(`node "${abs}"`, { cwd, timeout: 30000 }, (err, stdout, stderr) => {
             const out = (stdout || stderr || "").trim()
             resolve(out || (err ? `❌ ${err.message}` : "✅ Done (no output)"))
@@ -642,7 +720,28 @@ function listTools() {
     const toolsDir = path.resolve(__dirname, "../tools")
     let scripts = ""
     try { scripts = fs.readdirSync(toolsDir).filter(f => f.endsWith(".js")).join(", ") } catch {}
-    return `Tool scripts: ${scripts}\nAdmin agent tools: run_shell, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, write_file, read_file, npm_install, run_node, list_tools`
+    return `Tool scripts: ${scripts}\nAdmin agent tools: run_shell, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, write_file, read_file, npm_install, run_node, list_tools, list_governance`
+}
+
+function listGovernance(role, workspaceId) {
+    const snapshot = getGovernanceSnapshot(role, workspaceId)
+    const workers = Object.entries(snapshot.workers || {})
+        .map(([name, tools]) => `- ${name}: ${tools.join(", ")}`)
+        .join("\n")
+    const tools = Object.entries(snapshot.tools || {})
+        .map(([name, cfg]) => `- ${name}: category=${cfg.category}, risk=${cfg.risk}, approval=${cfg.approval}, mutating=${cfg.mutating}`)
+        .join("\n")
+    return [
+        `Role: ${snapshot.role}`,
+        snapshot.rolePolicy?.description ? `Role description: ${snapshot.rolePolicy.description}` : null,
+        snapshot.rolePolicy?.maxRisk ? `Max risk: ${snapshot.rolePolicy.maxRisk}` : null,
+        "",
+        "Worker topology:",
+        workers || "No worker policy configured.",
+        "",
+        "Tool policy:",
+        tools || "No tool policy configured."
+    ].filter(Boolean).join("\n")
 }
 
 async function serverHealth() {
@@ -721,16 +820,39 @@ async function youtubePlay(url) {
     return `▶️ Playing: ${url}`
 }
 
-async function dispatchTool(name, args) {
+async function dispatchTool(name, args, governanceContext = {}) {
     logger.info({ tool: name, args }, "adminAgent: tool call")
+    const decision = authorizeToolCall({
+        tool: name,
+        worker: governanceContext.worker,
+        role: governanceContext.role,
+        task: governanceContext.task,
+        workspaceId: governanceContext.workspaceId,
+    })
+    audit("tool_call", { tool: name, worker: governanceContext.worker, role: governanceContext.role, allowed: decision.allowed, requiresApproval: decision.requiresApproval, workspaceId: governanceContext.workspaceId })
+    if (!decision.allowed) {
+        if (decision.requiresApproval) {
+            const approval = createApprovalRequest({
+                taskId: governanceContext.taskId,
+                tool: name,
+                task: governanceContext.task,
+                worker: governanceContext.worker,
+                role: governanceContext.role,
+                workspaceId: governanceContext.workspaceId,
+                reason: decision.reason,
+            })
+            return `⏸ Approval required for ${name}.\nApproval ID: ${approval.id}\nReason: ${decision.reason}\nApprove with: ${settings.admin.keyword} ${settings.admin.pin} approve ${approval.id}\nThen rerun the task with token ${approval.id}.`
+        }
+        return `🚫 Governance blocked ${name}: ${decision.reason}${decision.approvalHint ? ` ${decision.approvalHint}` : ""}`
+    }
     if (COMPUTER_TOOLS.has(name)) return await computerTool.dispatch(name, args)
     switch (name) {
         case "run_shell":      return await runShell(args.command)
         case "mac_automation":  return await runMacAutomation(args.script, args.type)
         case "open_in_chrome":  return await runMacAutomation(`tell application "Google Chrome" to open location "${args.url}"`, "applescript")
         case "chrome_js":       return await runMacAutomation(`tell application "Google Chrome" to execute front window's active tab javascript "${(args.js||args.code||"").replace(/"/g,"'")}"`, "applescript")
-        case "query_db":      return queryDb(args.sql)
-        case "update_order":  return updateOrder(args.order_id, args.delivery_status, args.payment_status)
+        case "query_db":      return queryDb(args.sql, governanceContext.workspaceId)
+        case "update_order":  return updateOrder(args.order_id, args.delivery_status, args.payment_status, governanceContext.workspaceId)
         case "send_whatsapp": return await sendWhatsapp(args.phone, args.message)
         case "http_request":  return await httpRequest(args.url, args.method, args.body)
         case "load_test":     return await loadTest(args.url, args.requests, args.concurrency)
@@ -741,10 +863,35 @@ async function dispatchTool(name, args) {
         case "npm_install":   return await npmInstall(args.packages)
         case "run_node":      return await runNode(args.path)
         case "list_tools":    return listTools()
+        case "list_governance": return listGovernance(governanceContext.role, governanceContext.workspaceId)
         case "youtube_play":   return await youtubePlay(args.url)
         case "run_skill":     return await runSkill(args.skill, args.task)
         default:              return `❌ Unknown tool: ${name}`
     }
+}
+
+function formatPlan(plan) {
+    const steps = Array.isArray(plan?.steps) ? plan.steps : []
+    return [
+        `Plan summary: ${plan?.summary || "No summary"}`,
+        ...steps.map((step, idx) => `${idx + 1}. [${step.worker || "operator"}] ${step.goal} | preferred tools: ${(step.preferred_tools || []).join(", ") || "any safe tool"}`)
+    ].join("\n")
+}
+
+function formatWorkers() {
+    return listWorkers().map(worker =>
+        `- ${worker.name}: ${worker.description}\n  strengths: ${worker.strengths.join(", ")}\n  instructions: ${worker.instructions.join(" ")}`
+    ).join("\n")
+}
+
+function formatStepGuidance(plan) {
+    const steps = Array.isArray(plan?.steps) ? plan.steps : []
+    return steps.map((step, idx) => {
+        const worker = getWorker(step.worker)
+        return `${idx + 1}. Step ${step.id} led by ${worker.name}: ${step.goal}
+Preferred tools: ${(step.preferred_tools || []).join(", ") || "any safe tool"}
+Worker guidance: ${worker.instructions.join(" ")}`
+    }).join("\n\n")
 }
 
 // ── Agentic loop ──────────────────────────────────────────────────────────────
@@ -763,19 +910,30 @@ async function sendScreenshotToAdmin(imagePath) {
     }
 }
 
-async function runAgentLoop(task) {
+async function runAgentLoop(task, options = {}) {
     const cfg      = settings.admin.agent_llm || {}
     const apiKey   = cfg.api_key
     if (!apiKey) return "❌ No API key configured. Set admin.agent_llm.api_key in settings.json."
 
     const model        = cfg.model || "gpt-4o"
     const apiUrl       = cfg.url   || "https://api.openai.com/v1/chat/completions"
-    const businessName = settings.admin.business_name || "the business"
+    const workspaceId  = options.workspaceId || getActiveWorkspace()
+    const workspaceProfile = loadProfile(workspaceId)
+    const businessName = workspaceProfile.businessName || settings.admin.business_name || "the business"
+    const adminRole    = settings.admin.role || "super_admin"
+    const taskState    = createTaskState(task, { businessName, model }, workspaceId)
+    const plan         = await buildAdminPlan(task, { businessName })
+    setPlan(taskState.taskId, plan.steps, workspaceId)
 
     let messages = [
         {
             role: "system",
             content: `You are a powerful self-healing admin agent for ${businessName}. Today is ${new Date().toDateString()}.
+
+You are operating with a planner/executor workflow.
+You have already been given a high-level plan. Follow it unless evidence forces you to adapt.
+Work step by step, keep tool use intentional, and verify results before finishing.
+You should think and act like a coordinated team of specialist workers, even though you are returning one final answer.
 
 CORE BEHAVIOUR:
 - Always use tools to complete tasks. Never say you cannot do something without trying.
@@ -789,6 +947,11 @@ CORE BEHAVIOUR:
 - For skills: call run_skill to load it, then run the scripts with run_shell python3 or run_node. The API key is already available.
 - Never refuse to run a Python script. python3, pip3, and uv are all allowed.
 - CRITICAL: When a skill provides a bundled script (e.g. text_to_speech.py), ALWAYS run that exact script with run_shell. NEVER write a new Python script to replace it. The bundled script is correct — just call it with the right arguments.
+- Keep changes inside the project workspace unless the task clearly needs an external URL or system command.
+- Prefer read-only inspection before mutation.
+- When you mutate anything, mention what you changed in the final answer.
+- Tool usage is governed by explicit policy. If a tool is blocked, adapt your plan instead of retrying the same blocked action.
+- High-risk tools may require explicit approval language in the task, such as "approved" or "go ahead and ...".
 
 SELF-HEALING EXAMPLES:
 - Web search → always use DuckDuckGo https://html.duckduckgo.com/html/?q=your+query, parse <a class="result__a"> tags with cheerio
@@ -812,7 +975,29 @@ BROWSER AUTOMATION RULES — ALWAYS FOLLOW:
    Step 6: close_browser
    Step 7: youtube_play → url: "<URL from step 5 or click result>"
    DONE. youtube_play opens Chrome and starts playback automatically. Never use mac_automation for YouTube.
-AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, chrome_js, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, get_dom, type_by_index, click_by_index, write_file, read_file, npm_install, run_node, list_tools, run_skill`
+AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsapp, http_request, load_test, recon, server_health, open_browser, open_in_chrome, chrome_js, navigate, screenshot, click, type_text, press_key, read_page, scrape_page, scroll, wait_for_element, get_current_url, close_browser, get_dom, type_by_index, click_by_index, write_file, read_file, npm_install, run_node, list_tools, list_governance, run_skill`
+        },
+        {
+            role: "system",
+            content: `Task ID: ${taskState.taskId}
+
+Workspace ID: ${workspaceId}
+Admin role: ${adminRole}
+
+Worker roster:
+${formatWorkers()}
+
+Execution plan:
+${formatPlan(plan)}
+
+Detailed step guidance:
+${formatStepGuidance(plan)}
+
+When you finish, give a concise admin summary with:
+- outcome
+- important evidence
+- any files changed
+- any remaining risk`
         },
         { role: "user", content: task }
     ]
@@ -855,7 +1040,9 @@ AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsap
 
         if (!message.tool_calls?.length) {
             await computerTool.closeBrowser().catch(() => {})
-            return (message.content || "").trim() || "✅ Done."
+            const finalAnswer = (message.content || "").trim() || "✅ Done."
+            setFinalAnswer(taskState.taskId, finalAnswer, workspaceId)
+            return finalAnswer
         }
 
         const toolResults = []
@@ -864,7 +1051,17 @@ AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsap
             const args = typeof tc.function.arguments === "string"
                 ? JSON.parse(tc.function.arguments)
                 : tc.function.arguments
-            const result = await dispatchTool(tc.function.name, args)
+            appendToolCall(taskState.taskId, { tool: tc.function.name, args }, workspaceId)
+            const currentStep = plan.steps[Math.min(turns - 1, Math.max(plan.steps.length - 1, 0))] || { worker: "operator", id: "ad-hoc" }
+            const result = await dispatchTool(tc.function.name, args, {
+                role: adminRole,
+                worker: currentStep.worker,
+                stepId: currentStep.id,
+                taskId: taskState.taskId,
+                task,
+                workspaceId,
+            })
+            addNote(taskState.taskId, `${tc.function.name}: ${String(result).slice(0, 500)}`, workspaceId)
 
             if (tc.function.name === "screenshot" && result?.imagePath) {
                 if (!fs.existsSync(result.imagePath)) {
@@ -893,7 +1090,9 @@ AVAILABLE TOOLS: run_shell, mac_automation, query_db, update_order, send_whatsap
     }
 
     await computerTool.closeBrowser().catch(() => {})
-    return "⚠️ Agent reached max steps without completing the task."
+    const finalAnswer = "⚠️ Agent reached max steps without completing the task."
+    setFinalAnswer(taskState.taskId, finalAnswer, workspaceId)
+    return finalAnswer
 }
 
 module.exports = { runAgentLoop }
