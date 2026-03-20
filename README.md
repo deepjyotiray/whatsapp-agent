@@ -1,8 +1,17 @@
 # secure-agent
 
-A self-hosted, plug-and-play AI agent runtime for WhatsApp. Built for a home kitchen food business — zero cloud dependency, zero per-message cost, runs entirely on your own machine.
+A self-hosted, plug-and-play AI agent runtime. Built for a home kitchen food business — zero cloud dependency, zero per-message cost, runs entirely on your own machine.
 
-Agents are defined in YAML manifests. The runtime loads them, chains them, and enforces a secure pipeline on every message. The LLM is sandboxed by architecture — it classifies intent and formats responses. It never selects tools, accesses databases, or runs commands.
+Supports multiple transport layers out of the box:
+
+| Transport | File | Description |
+|---|---|---|
+| **WhatsApp** | `transports/whatsapp.js` | Baileys-based WhatsApp Web connection — no official API needed |
+| **HTTP API** | `transports/http.js` | REST API on port 3010 — setup UI, admin queries, agent management, customer messages |
+| **CLI** | `transports/cli.js` | Local REPL for testing — type messages, see responses |
+| **Internal Send API** | `transport/api.js` | Outbound message API on port 3001 — used by tools to send media and replies |
+
+Agents are defined in YAML manifests. The runtime loads them, chains them, and enforces a secure pipeline on every message regardless of which transport delivered it. The LLM is sandboxed by architecture — it classifies intent and formats responses. It never selects tools, accesses databases, or runs commands.
 
 All business logic — prompts, intents, tools, UPI handles, escalation contacts, FAQ — lives in the manifest. No code changes needed to deploy for a different business.
 
@@ -32,11 +41,11 @@ The result: every layer is explicit and traceable. You can follow a message from
 - Request invoice or payment QR — agent regenerates and resends the framed UPI QR image on demand
 - Pay by sending a screenshot — agent detects it, marks order paid, sends receipt
 - Get support — wrong order, late delivery, refund, allergy, bulk orders — handled by the support agent with full conversation context
-- Escalate to a human — "talk to human" notifies the owner on WhatsApp with the customer's name, order history, and full conversation thread
+- Escalate to a human — "talk to human" notifies the owner (via WhatsApp, HTTP callback, or any connected transport) with the customer's name, order history, and full conversation thread
 
 ## What the owner can do
 
-From their own WhatsApp number with a keyword + PIN:
+From their own WhatsApp number (keyword + PIN), the HTTP API, or the CLI:
 
 - Shell commands: `ray <pin> pm2 status`, `ray <pin> tail -n 50 logs/agent.log`
 - Natural language business queries: `ray <pin> how much profit this month`, `ray <pin> which orders are unpaid`, `ray <pin> show today's orders`
@@ -49,7 +58,7 @@ From their own WhatsApp number with a keyword + PIN:
 
 ### The Big Picture
 
-You have a WhatsApp number that your customers message. Behind that number is a Node.js program running on your Mac. That program reads every incoming message and decides what to do with it.
+You have a phone number (or API endpoint) that your customers message. Behind it is a Node.js program running on your Mac. That program reads every incoming message from any connected transport and decides what to do with it.
 
 There are two completely different worlds inside this program — the **customer world** and the **owner world**. The program figures out which world a message belongs to by looking at who sent it.
 
@@ -67,7 +76,7 @@ Is it from the owner's phone?
 
 ### The Customer World
 
-When a customer messages your WhatsApp, the message goes through a security pipeline before anything happens:
+When a customer messages (via WhatsApp, HTTP API, or CLI), the message goes through a security pipeline before anything happens:
 
 **Step 1 — Sanitizer**
 Checks if the message looks like an attack. Things like `../../etc/passwd` or `<script>` get blocked immediately. Max 500 characters.
@@ -88,13 +97,13 @@ The two tools that handle most customer interactions:
 - **RAG tool** — searches your menu using a vector database and answers questions like "do you have anything without onion"
 - **SQLite tool** — looks up order status, generates UPI QR codes, resends invoices
 
-If the customer asks something the restaurant agent can't handle, it passes to the **support agent** which does FAQ matching first, then LLM with full conversation context, then escalates to you on WhatsApp if needed.
+If the customer asks something the restaurant agent can't handle, it passes to the **support agent** which does FAQ matching first, then LLM with full conversation context, then escalates to you (via WhatsApp or any connected transport) if needed.
 
 ---
 
 ### The Owner World
 
-When a message comes from your phone number, the program skips the customer pipeline entirely.
+When a message comes from your phone number (or is authenticated via the HTTP API), the program skips the customer pipeline entirely.
 
 #### Text messages
 
@@ -192,7 +201,7 @@ restaurant-agent  →  show_menu / order_status / greet / help
         ↓ unknown, restricted, or out of domain
 support-agent  →  FAQ match + LLM with session memory + order context
         ↓ customer says "talk to human" or LLM fails
-Admin notified on WhatsApp — name, orders, full conversation thread
+Admin notified (via WhatsApp or connected transport) — name, orders, full conversation thread
 ```
 
 ### Admin Agent Loop
@@ -200,7 +209,7 @@ Admin notified on WhatsApp — name, orders, full conversation thread
 The admin channel runs a full agentic loop (up to 20 turns) powered by `gpt-4o-mini`. The agent has access to 35+ tools and is self-healing — if a tool fails it diagnoses the error and retries with a different approach automatically.
 
 ```
-Admin WhatsApp message → keyword + PIN check → runAgentLoop(task) → tool calls → final answer → WhatsApp reply
+Admin message (WhatsApp / HTTP API / CLI) → keyword + PIN check → runAgentLoop(task) → tool calls → final answer → reply
 ```
 
 Tool categories available to the admin agent:
@@ -409,6 +418,9 @@ node seed.js --agent agents/restaurant.yml
 node index.js --agent agents/restaurant.yml --transport whatsapp
 # Scan the QR with WhatsApp to link the session
 
+# Or start with HTTP API only (no WhatsApp)
+node index.js --agent agents/restaurant.yml --transport http
+
 # Or test locally with CLI
 node index.js --agent agents/restaurant.yml --transport cli
 
@@ -420,7 +432,7 @@ pm2 startup
 
 ## HTTP API
 
-The HTTP server starts automatically alongside the WhatsApp transport on port `3010` (configurable via `settings.transports.http.port`).
+The HTTP server starts automatically alongside any transport on port `3010` (configurable via `settings.transports.http.port`). It serves the setup UI, admin APIs, agent management, and customer message endpoint.
 
 Base URL: `http://127.0.0.1:3010`
 
@@ -692,13 +704,14 @@ No code changes required.
 ## Security
 
 - LLM is sandboxed — it only sees what the pipeline explicitly feeds it. It cannot select tools, access databases, or run commands
-- Admin channel only works from one registered phone number + correct PIN
+- Admin channel works from one registered phone number + correct PIN (WhatsApp) or session cookie (HTTP API)
 - Shell execution uses a command prefix allowlist
 - Restricted intents fall through to the next agent — never hard-blocked from the customer's perspective
 - WhatsApp session keys (`auth/`) are never committed
 - All inter-service calls use a shared secret header (`x-secret`)
 - No business data (DB path, UPI handle, phone numbers) is hardcoded in runtime code
 - `tmp/`, `out/`, `.playwright-cli/` are gitignored — no runtime artifacts committed
+- Transport-agnostic pipeline — the same security gates apply whether the message arrives via WhatsApp, HTTP, or CLI
 
 ## License
 

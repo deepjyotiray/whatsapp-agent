@@ -62,7 +62,7 @@ This creates:
 | `offerings` | Products/services — drives intent and tool generation |
 | `faqSeed` | Comma-separated topics to seed the FAQ knowledge base |
 | `supportPolicy` | Refund/complaint handling rules baked into the support agent |
-| `adminPhone` | Phone number that gets admin access via WhatsApp |
+| `adminPhone` | Phone number that gets admin access via WhatsApp or is used for caller identification |
 | `adminPin` | PIN required alongside the admin keyword |
 | `openaiKey` | Used for generation and the admin agent loop |
 | `dbPath` | Absolute path to the business's SQLite database |

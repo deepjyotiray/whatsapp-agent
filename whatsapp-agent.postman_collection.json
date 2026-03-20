@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "secure-agent",
-    "description": "Complete API reference for the secure-agent server.\n\n**Auth**: Most endpoints require the `x-secret` header matching `api.secret` in `config/settings.json`.\n\n**Variables**:\n- `base_url` — HTTP transport (default: `http://127.0.0.1:3010`)\n- `internal_url` — Internal send API (default: `http://127.0.0.1:3001`)\n- `secret` — Value of `api.secret` from `config/settings.json`\n\n**Folders**:\n1. **Utility** — Health, capabilities, governance, approvals\n2. **Customer pipeline** — Simulate WhatsApp customer messages\n3. **Agent management** — Inspect and hot-edit intents and tools without restarting\n4. **Admin — query** — Natural language DB queries (no agent loop)\n5. **Admin — agent** — Full agentic tasks (uses agent loop + governance)\n6. **Internal send API** — Push outbound WhatsApp messages",
+    "description": "Complete API reference for the secure-agent server.\n\n**Auth**: Most endpoints require the `x-secret` header matching `api.secret` in `config/settings.json`.\n\n**Variables**:\n- `base_url` — HTTP transport (default: `http://127.0.0.1:3010`)\n- `internal_url` — Internal send API (default: `http://127.0.0.1:3001`)\n- `secret` — Value of `api.secret` from `config/settings.json`\n\n**Transports**: The HTTP API runs alongside any transport (WhatsApp, CLI). All endpoints work regardless of which transport is active.\n\n**Folders**:\n1. **Setup auth** — Login/logout for session cookie\n2. **Workspace management** — Profiles, drafts, promotion\n3. **Setup chat** — Test draft/live agent\n4. **Utility** — Health, capabilities, governance, approvals, workers\n5. **Customer pipeline** — Simulate customer messages\n6. **Agent management** — Hot-edit intents and tools\n7. **Admin — query** — Natural language DB queries\n8. **Admin — agent** — Full agentic tasks\n9. **Internal send API** — Push outbound messages",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -201,7 +201,7 @@
     },
     {
       "name": "Customer pipeline",
-      "description": "Simulate inbound WhatsApp messages from a customer. The agent runs the full pipeline: sanitize → intent route → tool execute. Use a real phone number format (e.g. 919XXXXXXXXX).",
+      "description": "Simulate inbound customer messages via the HTTP API. The agent runs the full pipeline: sanitize → intent route → tool execute. Use a real phone number format (e.g. 919XXXXXXXXX). The same pipeline runs regardless of transport (WhatsApp, HTTP, CLI).",
       "item": [
         {
           "name": "Greet",
@@ -597,7 +597,7 @@
     },
     {
       "name": "Internal send API",
-      "description": "Push outbound WhatsApp messages directly to a phone number. Runs on the internal port (3001) — not exposed publicly. Requires x-secret.",
+      "description": "Push outbound messages directly to a phone number. Runs on the internal port (3001) — not exposed publicly. Requires x-secret.",
       "item": [
         {
           "name": "Send WhatsApp message",
@@ -612,7 +612,7 @@
               "mode": "raw",
               "raw": "{\n  \"phone\": \"+919000000000\",\n  \"message\": \"hello from the API\"\n}"
             },
-            "description": "Sends a WhatsApp message to the given phone number via the connected WhatsApp session. Phone must include country code with + prefix."
+            "description": "Sends a message to the given phone number via the connected transport (WhatsApp session or other). Phone must include country code with + prefix."
           }
         }
       ]

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The secure-agent is a multi-tenant AI agent runtime for WhatsApp. It runs two completely separate pipelines — one for customers, one for admins — that share a common governance layer.
+The secure-agent is a multi-tenant AI agent runtime. It supports multiple transports (WhatsApp, HTTP API, CLI) and runs two completely separate pipelines — one for customers, one for admins — that share a common governance layer.
 
 ```
 Incoming message
@@ -163,7 +163,7 @@ support-agent  →  FAQ match + LLM with session memory + order context
         │
         ↓ customer says "talk to human" or LLM fails
         │
-Admin notified on WhatsApp — customer name, order history, full conversation thread
+Admin notified (via WhatsApp, HTTP callback, or any connected transport) — customer name, order history, full conversation thread
 ```
 
 ### Session Memory
@@ -187,6 +187,7 @@ The admin pipeline handles two modes: **query** (read-only SQL) and **agent** (f
 |---|---|---|
 | API: `POST /setup/admin/run` | Session cookie | `handleAdmin(payload)` |
 | WhatsApp: `ray <pin> <command>` | Phone number + keyword + PIN | `handleAdmin(payload)` |
+| CLI: `ray <pin> <command>` | Keyword + PIN | `handleAdmin(payload)` |
 
 ### Mode routing
 
@@ -239,7 +240,7 @@ Task ──► Planner ──► Worker assignment ──► Tool calls (up to 2
 |---|---|---|
 | `planner` | Sequencing, choosing tools | Read-only tools, planning |
 | `researcher` | Gathering facts | DB queries, file reading, browser inspection |
-| `operator` | Executing actions | Shell, WhatsApp, browser clicks, order updates |
+| `operator` | Executing actions | Shell, messaging, browser clicks, order updates |
 | `coder` | Writing code | File writes, npm install, script execution |
 
 **Tool dispatch** (`dispatchTool()`): Every tool call passes through governance before execution:
@@ -529,7 +530,7 @@ Workspaces share the same server process but each has:
 ### Customer message
 
 ```
-WhatsApp message
+Inbound message (WhatsApp / HTTP API / CLI)
     │
     ▼
 Sanitizer ── blocked? ──► "Message could not be processed"
@@ -553,7 +554,7 @@ Manifest lookup: intent → tool name → tool config
 Tool executor (deterministic, no LLM)
     │
     ▼
-Response → WhatsApp
+Response → transport (WhatsApp / HTTP / CLI)
 ```
 
 ### Admin query mode
