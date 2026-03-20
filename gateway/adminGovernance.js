@@ -149,7 +149,20 @@ function getGovernanceSnapshot(role, workspaceId = getActiveWorkspace()) {
     }
 }
 
+function updatePolicy(patch, workspaceId = getActiveWorkspace()) {
+    const policy = loadPolicy(workspaceId)
+    if (patch.tools) Object.assign(policy.tools, patch.tools)
+    if (patch.roles) Object.assign(policy.roles, patch.roles)
+    if (patch.workers) Object.assign(policy.workers, patch.workers)
+    if (patch.defaultRole) policy.defaultRole = patch.defaultRole
+    const target = ensureWorkspacePolicy(workspaceId)
+    fs.writeFileSync(target, JSON.stringify(policy, null, 2))
+    audit("policy_update", { patch }, workspaceId)
+    return policy
+}
+
 module.exports = {
     authorizeToolCall,
     getGovernanceSnapshot,
+    updatePolicy,
 }

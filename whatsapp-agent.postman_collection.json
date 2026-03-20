@@ -35,6 +35,84 @@
       ]
     },
     {
+      "name": "Workspace management",
+      "description": "Manage workspaces — list, switch, load/save profiles, generate agent drafts, and promote drafts to live.",
+      "item": [
+        {
+          "name": "List workspaces",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/setup/workspaces",
+            "description": "Returns all workspace IDs and which one is currently active."
+          }
+        },
+        {
+          "name": "Select workspace",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/workspace/select",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"workspaceId\": \"default\"\n}" },
+            "description": "Switches the active workspace. All subsequent requests without an explicit workspaceId will use this one."
+          }
+        },
+        {
+          "name": "Get profile",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/setup/profile?workspace=default",
+            "description": "Returns the workspace profile (business name, DB path, tools config), draft files list, and workspace summary. Pass `?workspace=` to target a specific workspace."
+          }
+        },
+        {
+          "name": "Save profile",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/profile",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"businessName\": \"Ray's Home Kitchen\",\n  \"cuisine\": \"home-style Indian food\",\n  \"tone\": \"warm, sharp, and naturally business-aware\",\n  \"dbPath\": \"/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db\",\n  \"workspaceId\": \"default\"\n}" },
+            "description": "Saves the workspace profile. All fields are merged into the existing profile. Include `workspaceId` to target a specific workspace."
+          }
+        },
+        {
+          "name": "Generate draft",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/generate",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"businessName\": \"Ray's Home Kitchen\",\n  \"cuisine\": \"home-style Indian food\",\n  \"tone\": \"warm, sharp, and naturally business-aware\",\n  \"dbPath\": \"/Users/deepjyotiray/Documents/FoodWebsite/ray-orders-backend/orders.db\",\n  \"workspaceId\": \"default\"\n}" },
+            "description": "Saves the profile then generates a full agent draft (manifest, FAQ, policy files). Returns the generated intent names, FAQ topics, and keyword count. Does NOT go live until you call Promote."
+          }
+        },
+        {
+          "name": "Promote draft to live",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/promote",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"workspaceId\": \"default\"\n}" },
+            "description": "Copies draft files to the live agent config. The agent will reload with the new manifest, FAQ, and policy on next request."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Setup chat",
+      "description": "Test the agent in draft or live mode. If a draft exists for the workspace, the message is routed to the draft agent. Otherwise it goes to the live agent.",
+      "item": [
+        {
+          "name": "Chat with draft/live agent",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/chat",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"919000000000\",\n  \"message\": \"hi\",\n  \"workspaceId\": \"default\"\n}" },
+            "description": "Sends a test message. Response includes `source: 'draft'` or `source: 'live'` so you know which agent handled it."
+          }
+        }
+      ]
+    },
+    {
       "name": "Utility",
       "description": "Diagnostic and observability endpoints. No auth required for /health and /capabilities.",
       "item": [
@@ -83,6 +161,40 @@
               "raw": "{\n  \"id\": \"apr-xxxx-xxxx\"\n}"
             },
             "description": "Approves a pending tool call by its ID (from the list above). The blocked agent turn will resume. No x-secret required (setup session auth)."
+          }
+        },
+        {
+          "name": "Update governance policy",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/governance/policy",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tools\": {\n    \"query_db\": {\n      \"category\": \"data\",\n      \"risk\": \"low\",\n      \"mutating\": false,\n      \"approval\": \"none\",\n      \"roles\": [\"super_admin\", \"system_admin\"]\n    }\n  }\n}"
+            },
+            "description": "Merges partial updates into admin-governance.json. Pass only the keys you want to change — `tools`, `roles`, `workers`, or `defaultRole`. Example: remove observer from query_db access. Requires setup session cookie."
+          }
+        },
+        {
+          "name": "Restore query_db to all roles",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/governance/policy",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tools\": {\n    \"query_db\": {\n      \"category\": \"data\",\n      \"risk\": \"low\",\n      \"mutating\": false,\n      \"approval\": \"none\",\n      \"roles\": [\"observer\", \"operator\", \"super_admin\", \"system_admin\"]\n    }\n  }\n}"
+            },
+            "description": "Restores query_db access to all roles (undo the restriction above)."
+          }
+        },
+        {
+          "name": "List workers",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/setup/workers",
+            "description": "Returns all agent workers (planner, researcher, operator, coder) and their allowed tool lists."
           }
         }
       ]
@@ -313,7 +425,7 @@
     },
     {
       "name": "Admin — query",
-      "description": "Natural language queries against the orders.db database. Runs in `query` mode — no agent loop, no governance, just a direct LLM → SQL → result pipeline. Fast and safe for read-only questions.\n\nNo x-secret required (uses setup session auth or is open in dev).",
+      "description": "Natural language queries against the orders.db database. Runs in `query` mode — LLM generates SQL dynamically from the DB schema, executes it (read-only), and summarises the results.\n\nGovernance: checked against the `query_db` tool policy. Pass `role` in the body to test different access levels (defaults to super_admin).\n\nRequires setup session cookie (run Login first).",
       "item": [
         {
           "name": "How much did I make today",
@@ -321,8 +433,8 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"how much did I make today\"\n}" },
-            "description": "Sums today's revenue from the orders table."
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"how much did I make today\",\n  \"role\": \"super_admin\"\n}" },
+            "description": "Sums today's revenue from the orders table. LLM generates SQL dynamically against the DB."
           }
         },
         {
@@ -331,7 +443,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"which orders are unpaid\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"which orders are unpaid\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Lists all orders with payment_status != paid."
           }
         },
@@ -341,7 +453,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"how much profit this month\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"how much profit this month\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Calculates income minus expenses for the current month from the expenses table."
           }
         },
@@ -351,7 +463,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"show today's active orders\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"show today's active orders\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Lists orders placed today that are not yet delivered or cancelled."
           }
         },
@@ -361,7 +473,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"overall revenue this year\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"overall revenue this year\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Total revenue from all paid orders in the current calendar year."
           }
         },
@@ -371,7 +483,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"what are the top 5 selling items this month\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"what are the top 5 selling items this month\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Ranks menu items by order frequency for the current month."
           }
         },
@@ -381,8 +493,18 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"show all expenses this week\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"show all expenses this week\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Lists all expense entries from the expenses table for the current week. Dates are stored as DD/MM/YYYY."
+          }
+        },
+        {
+          "name": "Expenses today (observer — blocked)",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/admin/run",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"query\",\n  \"task\": \"show expenses today\",\n  \"role\": \"observer\"\n}" },
+            "description": "Demonstrates governance: if observer is removed from query_db roles in admin-governance.json, this request will be blocked with a reason."
           }
         }
       ]
@@ -397,7 +519,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"pm2 status\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"pm2 status\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Runs `pm2 list` via the shell tool and returns process status. Good first test for the agent loop."
           }
         },
@@ -407,7 +529,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"show unpaid orders from this week\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"show unpaid orders from this week\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Agent queries the DB and formats a list of unpaid orders."
           }
         },
@@ -417,7 +539,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"mark order ORD-123 as delivered\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"mark order ORD-123 as delivered\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Mutating operation — agent updates the order status in the DB. Governed by admin-governance.json (low risk, no approval needed)."
           }
         },
@@ -427,7 +549,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"add expense: vegetables 450 rupees today\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"add expense: vegetables 450 rupees today\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Agent uses the `add_expense` tool to insert a row into the expenses table. Date stored as DD/MM/YYYY."
           }
         },
@@ -437,7 +559,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"recon https://healthymealspot.com\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"recon https://healthymealspot.com\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Agent fetches the website and summarises what it finds — useful for checking if the site is live and what it shows."
           }
         },
@@ -447,7 +569,7 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"tail -n 50 logs/agent.log\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"tail -n 50 logs/agent.log\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Agent runs the shell command and returns the last 50 lines of the agent log."
           }
         },
@@ -457,8 +579,18 @@
             "method": "POST",
             "url": "{{base_url}}/setup/admin/run",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"apply coupon SAVE10 to order ORD-456\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"mode\": \"agent\",\n  \"task\": \"apply coupon SAVE10 to order ORD-456\",\n  \"role\": \"super_admin\"\n}" },
             "description": "Agent looks up the coupon in the coupons table and applies it to the specified order."
+          }
+        },
+        {
+          "name": "Extract expenses from image",
+          "request": {
+            "method": "POST",
+            "url": "{{base_url}}/setup/admin/image",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"image\": \"<base64-encoded-image>\",\n  \"caption\": \"today's grocery bill\",\n  \"workspaceId\": \"default\"\n}" },
+            "description": "Sends a base64-encoded image (e.g. a grocery receipt) to the vision LLM. It extracts expense/income entries and inserts them directly into the expenses table. Returns the list of added entries."
           }
         }
       ]

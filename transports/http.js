@@ -17,10 +17,11 @@ const {
     setActiveWorkspace,
 } = require("../setup/profileService")
 const { chatWithDraft } = require("../setup/chatSandbox")
-const { getGovernanceSnapshot } = require("../gateway/adminGovernance")
+const { getGovernanceSnapshot, updatePolicy } = require("../gateway/adminGovernance")
 const { listApprovals, approveRequest } = require("../gateway/adminApprovals")
-const { handleAdmin } = require("../gateway/admin")
-const { getActiveWorkspace } = require("../core/workspace")
+const { handleAdmin, handleAdminImage } = require("../gateway/admin")
+const { listWorkers } = require("../gateway/adminWorkers")
+const { getActiveWorkspace, listWorkspaceIds } = require("../core/workspace")
 
 const PORT   = settings.transports?.http?.port || 3010
 const SECRET = settings.api.secret
@@ -245,6 +246,19 @@ const server = http.createServer(async (req, res) => {
         return
     }
 
+    if (req.method === "POST" && pathname === "/setup/governance/policy") {
+        try {
+            const body = await readBody(req)
+            const workspaceId = body.workspaceId || getActiveWorkspace()
+            const policy = updatePolicy(body, workspaceId)
+            sendJson(res, 200, { ok: true, policy })
+        } catch (err) {
+            logger.error({ err }, "setup governance policy update failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
     if (req.method === "POST" && pathname === "/setup/workspace/select") {
         try {
             const { workspaceId } = await readBody(req)
@@ -323,17 +337,53 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/setup/admin/run") {
         try {
-            const { task, mode, workspaceId } = await readBody(req)
+            const { task, mode, workspaceId, role } = await readBody(req)
             if (!task) {
                 sendJson(res, 400, { error: "task required" })
                 return
             }
             const payload = mode === "query" ? task : `agent ${task}`
             const resolvedWorkspace = workspaceId || getActiveWorkspace()
-            const response = await handleAdmin(payload, { workspaceId: resolvedWorkspace })
+            const response = await handleAdmin(payload, { workspaceId: resolvedWorkspace, role })
             sendJson(res, 200, { ok: true, response, mode: mode || "agent", workspaceId: resolvedWorkspace })
         } catch (err) {
             logger.error({ err }, "setup admin run failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "POST" && pathname === "/setup/admin/image") {
+        try {
+            const { image, caption, workspaceId } = await readBody(req)
+            if (!image) {
+                sendJson(res, 400, { error: "image (base64) required" })
+                return
+            }
+            const response = await handleAdminImage(image, caption, { workspaceId: workspaceId || getActiveWorkspace() })
+            sendJson(res, 200, { ok: true, response })
+        } catch (err) {
+            logger.error({ err }, "setup admin image failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/workspaces") {
+        try {
+            sendJson(res, 200, { workspaces: listWorkspaceIds(), active: getActiveWorkspace() })
+        } catch (err) {
+            logger.error({ err }, "setup workspaces list failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/workers") {
+        try {
+            sendJson(res, 200, { workers: listWorkers() })
+        } catch (err) {
+            logger.error({ err }, "setup workers list failed")
             sendJson(res, 500, { error: err.message })
         }
         return

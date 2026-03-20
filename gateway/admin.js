@@ -6,6 +6,7 @@ const settings = require("../config/settings.json")
 const { complete } = require("../providers/llm")
 const { runAgentLoop } = require("./adminAgent")
 const { approveRequest, listApprovals } = require("./adminApprovals")
+const { authorizeToolCall } = require("./adminGovernance")
 const { getActiveWorkspace } = require("../core/workspace")
 const { loadProfile } = require("../setup/profileService")
 const logger = require("./logger")
@@ -257,6 +258,7 @@ Answer:`
 async function handleAdmin(payload, options = {}) {
     if (!payload) return "⚙️ Admin ready. Usage: `ray <pin> <command or question>`\n`ray <pin> agent <task>` for full agentic mode"
     const workspaceId = options.workspaceId || getActiveWorkspace()
+    const role = options.role || settings.admin?.role || "super_admin"
 
     logger.info({ payload }, "admin: handling request")
 
@@ -287,7 +289,10 @@ async function handleAdmin(payload, options = {}) {
         return `\`\`\`\n${result}\n\`\`\``
     }
 
-    // Natural language — dynamic SQL via LLM
+    // Natural language — governance check then dynamic SQL via LLM
+    const auth = authorizeToolCall({ role, worker: "operator", tool: "query_db", task: payload, workspaceId })
+    if (!auth.allowed) return `⛔ ${auth.reason}${auth.approvalHint ? "\n" + auth.approvalHint : ""}`
+
     const dbContext = buildDbContext(workspaceId)
     return await queryWithLlm(payload, dbContext, workspaceId)
 }
