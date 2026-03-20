@@ -1,4 +1,4 @@
-# whatsapp-agent
+# secure-agent
 
 A self-hosted, plug-and-play AI agent runtime for WhatsApp. Built for a home kitchen food business — zero cloud dependency, zero per-message cost, runs entirely on your own machine.
 
