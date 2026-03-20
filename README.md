@@ -6,6 +6,25 @@ Agents are defined in YAML manifests. The runtime loads them, chains them, and e
 
 All business logic — prompts, intents, tools, UPI handles, escalation contacts, FAQ — lives in the manifest. No code changes needed to deploy for a different business.
 
+## Why No LangChain?
+
+This project implements every concept LangChain provides — natively, in plain Node.js, with zero framework dependencies.
+
+| LangChain concept | Built-in implementation |
+|---|---|
+| Prompt templates | Inline in `intentParser.js`, `adminAgent.js`, `admin.js` |
+| Chain composition | `agentChain.js` — manifest-driven agent chaining |
+| Tool calling | `executor.js` (customer) + `dispatchTool` in `adminAgent.js` (admin) |
+| Agent loop | `runAgentLoop` in `adminAgent.js` — 20-turn self-healing loop with OpenAI function calling |
+| Memory | `sessionMemory.js` — 30-min rolling window per phone |
+| RAG | `ragTool.js` — SQLite keyword search + LanceDB vector fallback |
+| Guardrails | `sanitizer.js` + `policyEngine.js` + `adminGovernance.js` |
+| Multi-agent routing | `customerRouter.js` — heuristic + LLM intent classification |
+| Worker/tool orchestration | `adminWorkers.js` + `adminPlanner.js` — 4 specialized workers with governance-controlled tool access |
+| Provider switching | `providers/llm.js` — swap between Ollama, OpenAI, and Anthropic with one config change |
+
+The result: every layer is explicit and traceable. You can follow a message from WhatsApp to tool execution in plain code — no framework abstractions, no hidden prompt chains, no magic. The governance layer (`adminGovernance.js`) enforces hard security boundaries that no LLM call can override, something that's difficult to guarantee when tool dispatch is managed by a third-party framework.
+
 ## What customers can do
 
 - Browse the menu — veg/non-veg, prices, specific dishes, coupons
