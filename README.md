@@ -386,13 +386,186 @@ python3 -m venv .venv
 # Seed the vector DB from your SQLite DB
 node seed.js --agent agents/restaurant.yml
 
-# Start with WhatsApp transport
+# Start with WhatsApp transport (also starts the HTTP API on port 3010)
 node index.js --agent agents/restaurant.yml --transport whatsapp
 # Scan the QR with WhatsApp to link the session
 
 # Or test locally with CLI
 node index.js --agent agents/restaurant.yml --transport cli
+
+# Or run with pm2 (recommended for production)
+pm2 start index.js --name whatsapp-agent -- --agent agents/restaurant.yml --transport whatsapp
+pm2 save
+pm2 startup
 ```
+
+## HTTP API
+
+The HTTP server starts automatically alongside the WhatsApp transport on port `3010` (configurable via `settings.transports.http.port`).
+
+Base URL: `http://127.0.0.1:3010`
+
+### Authentication
+
+Endpoints under `/message` and `/governance` require:
+```
+x-secret: <value of api.secret in settings.json>
+```
+
+Endpoints under `/setup/*` are open from localhost. When accessed from the configured `SETUP_HOST` domain they require a session cookie obtained via `POST /setup/login`.
+
+---
+
+### Customer pipeline
+
+**Send a customer message**
+```
+POST /message
+Header: x-secret: <api.secret>
+Body:
+{
+  "phone": "919000000000",
+  "message": "show me the menu"
+}
+```
+The phone number determines routing. Any number that is not the admin number goes through the full customer pipeline — sanitizer → domain gate → intent → tool → response.
+
+Response:
+```json
+{ "response": "Here's our menu for today..." }
+```
+
+---
+
+### Admin — natural language query
+
+**Ask a business question**
+```
+POST /setup/admin/run
+Body:
+{
+  "mode": "query",
+  "task": "how much did I make today"
+}
+```
+Builds a live DB snapshot (orders, revenue, expenses) and asks the LLM to answer using only that data. Fast, no agent loop.
+
+More examples:
+```json
+{ "mode": "query", "task": "which orders are unpaid" }
+{ "mode": "query", "task": "how much profit this month" }
+{ "mode": "query", "task": "show today's active orders" }
+```
+
+Response:
+```json
+{ "ok": true, "response": "Today's paid revenue is ₹2,340 across 6 orders.", "mode": "query" }
+```
+
+---
+
+### Admin — agentic task
+
+**Run a task with the full agent loop**
+```
+POST /setup/admin/run
+Body:
+{
+  "mode": "agent",
+  "task": "show unpaid orders from this week"
+}
+```
+Spawns the full agentic loop — planner → tool calls → governance → self-healing → final answer. Use this for anything that needs tools: DB writes, shell commands, browser automation, etc.
+
+More examples:
+```json
+{ "mode": "agent", "task": "pm2 status" }
+{ "mode": "agent", "task": "mark order ORD-123 as delivered" }
+{ "mode": "agent", "task": "recon https://healthymealspot.com" }
+```
+
+Response:
+```json
+{ "ok": true, "response": "Found 3 unpaid orders...", "mode": "agent" }
+```
+
+---
+
+### Utility
+
+**Health check**
+```
+GET /health
+```
+Response:
+```json
+{ "status": "ok", "agent": "restaurant-agent", "timestamp": "2026-03-20T08:52:42.498Z" }
+```
+
+**What the agent can handle**
+```
+GET /capabilities
+```
+Returns the loaded agent's intents, domain keywords, and chained agents.
+
+**Governance snapshot**
+```
+GET /governance
+Header: x-secret: <api.secret>
+```
+Returns the active workspace's full governance policy — roles, worker topology, tool risk levels.
+
+**List pending approvals**
+```
+GET /governance/approvals
+Header: x-secret: <api.secret>
+```
+
+**Approve a blocked tool call**
+```
+POST /setup/approvals/approve
+Body:
+{
+  "id": "apr-xxxx-xxxx"
+}
+```
+
+---
+
+### Internal send API (port 3001)
+
+Used by the agent's own tools to send WhatsApp messages and media back out. Not for external use, but useful for integration testing.
+
+**Send a WhatsApp message**
+```
+POST http://127.0.0.1:3001/send
+Header: x-secret: <api.secret>
+Body:
+{
+  "phone": "+919000000000",
+  "message": "hello from the API"
+}
+```
+
+---
+
+### Postman quick-start
+
+1. Set a Postman environment variable `secret` = value of `api.secret` from your `settings.json`
+2. Set `base_url` = `http://127.0.0.1:3010`
+3. Import these as a collection:
+
+| Name | Method | URL | Auth header | Body |
+|------|--------|-----|-------------|------|
+| Health | GET | `{{base_url}}/health` | — | — |
+| Capabilities | GET | `{{base_url}}/capabilities` | — | — |
+| Customer message | POST | `{{base_url}}/message` | `x-secret: {{secret}}` | `{"phone":"919000000000","message":"show me the menu"}` |
+| Admin query | POST | `{{base_url}}/setup/admin/run` | — | `{"mode":"query","task":"how much did I make today"}` |
+| Admin agent | POST | `{{base_url}}/setup/admin/run` | — | `{"mode":"agent","task":"show unpaid orders"}` |
+| Governance | GET | `{{base_url}}/governance` | `x-secret: {{secret}}` | — |
+| Approvals | GET | `{{base_url}}/governance/approvals` | `x-secret: {{secret}}` | — |
+| Approve | POST | `{{base_url}}/setup/approvals/approve` | — | `{"id":"apr-xxxx-xxxx"}` |
+| Internal send | POST | `http://127.0.0.1:3001/send` | `x-secret: {{secret}}` | `{"phone":"+919000000000","message":"test"}` |
 
 ## Configuration
 
