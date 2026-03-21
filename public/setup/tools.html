@@ -19,6 +19,8 @@
     .ro-bar .hint{font-size:0.78rem;color:var(--muted)}
     .mut-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
     .mut-dot.yes{background:var(--red)}.mut-dot.no{background:var(--green)}
+    .au-row{display:grid;grid-template-columns:1fr 1fr 120px 110px 80px auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.82rem}
+    .au-row select,.au-row input[type=text],.au-row input[type=password]{font-size:0.8rem;padding:3px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%}
   </style>
 </head><body>
   <main class="page">
@@ -113,6 +115,44 @@
       <textarea id="notes-text" rows="8" style="width:100%"></textarea>
       <div class="btn-group" style="margin-top:8px"><button class="btn btn-primary btn-sm" id="notes-save">Save</button></div>
       <div class="status-box" id="notes-status" style="margin-top:8px"></div>
+    </div>
+
+    <!-- Admin Users -->
+    <div class="card">
+      <div class="card-head"><h3>Admin Users</h3><button class="btn btn-ghost btn-sm" id="au-refresh">Refresh</button></div>
+      <p style="font-size:0.82rem;color:var(--muted);margin:0 0 10px">Users who can send admin commands via WhatsApp or any channel.</p>
+      <div class="au-row cap-header">
+        <span>Phone</span><span>Name</span><span>Role</span><span>Mode</span><span>PIN</span><span></span>
+      </div>
+      <div id="au-list"></div>
+      <details style="margin-top:12px">
+        <summary style="cursor:pointer;font-size:0.84rem;color:var(--accent);font-weight:600">+ Add User</summary>
+        <div style="display:grid;gap:8px;margin-top:8px">
+          <div class="form-grid">
+            <label class="field"><span>Phone</span><input id="au-phone" required placeholder="919876543210"></label>
+            <label class="field"><span>Name</span><input id="au-name" placeholder="Mom"></label>
+            <label class="field"><span>Role</span>
+              <select id="au-role"><option>super_admin</option><option selected>operator</option><option>observer</option><option>system_admin</option></select>
+            </label>
+            <label class="field"><span>Mode</span>
+              <select id="au-mode"><option selected>full</option><option>agent_only</option><option>query_only</option><option>shell_only</option></select>
+            </label>
+            <label class="field"><span>PIN</span><input id="au-pin" placeholder="122333"></label>
+          </div>
+          <button class="btn btn-primary btn-sm" id="au-add-btn">Add</button>
+        </div>
+      </details>
+    </div>
+
+    <!-- Admin Shell Commands -->
+    <div class="card">
+      <div class="card-head"><h3>Admin Shell Commands</h3><button class="btn btn-ghost btn-sm" id="sh-refresh">Refresh</button></div>
+      <p style="font-size:0.82rem;color:var(--muted);margin:0 0 10px">Commands the admin can run directly via WhatsApp (bypasses governance).</p>
+      <div id="sh-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+        <input id="sh-new" placeholder="e.g. pmset" style="flex:1;font-size:0.84rem;padding:5px 8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm)">
+        <button class="btn btn-primary btn-sm" id="sh-add">Add</button>
+      </div>
     </div>
 
     <!-- Workers -->
@@ -231,6 +271,19 @@
 
     // ── Capabilities ─────────────────────────────────────────────────────────
     var _capTools = {}
+    function capSelect(name, field, options, current) {
+      var s = '<select data-cap="' + esc(name) + '" data-field="' + field + '">'
+      for (var i = 0; i < options.length; i++) s += '<option' + (options[i] === current ? ' selected' : '') + '>' + esc(options[i]) + '</option>'
+      return s + '</select>'
+    }
+    async function saveCap(name, field, value) {
+      var c = Object.assign({}, _capTools[name])
+      if (field === "mutating") c.mutating = value
+      else c[field] = value
+      var tool = {}; tool[name] = c
+      try { await api("/setup/governance/policy", "POST", { tools: tool, workspaceId: activeWorkspace }); loadCaps() }
+      catch (e) { alert(e.message) }
+    }
     async function loadCaps() {
       try {
         var d = await api(ws("/setup/governance"))
@@ -242,16 +295,25 @@
           if (c.mutating && c.approval !== "explicit") allMutExplicit = false
           var row = document.createElement("div")
           row.className = "cap-row"
-          row.innerHTML = '<div><span class="mut-dot ' + (c.mutating ? "yes" : "no") + '"></span><code>' + esc(name) + '</code></div>' +
-            '<span>' + esc(c.category || "") + '</span>' +
-            '<span class="badge badge-' + ({low:"muted",medium:"yellow",high:"red",critical:"red"}[c.risk]||"muted") + '">' + esc(c.risk || "") + '</span>' +
-            '<span class="badge badge-' + ({none:"muted",task_intent:"yellow",explicit:"red"}[c.approval]||"muted") + '">' + esc(c.approval || "") + '</span>' +
-            '<span style="font-size:0.76rem;color:var(--muted)">' + esc((c.roles||[]).join(", ")) + '</span>' +
+          row.innerHTML = '<div><input type="checkbox" class="cap-mut" data-cap="' + esc(name) + '"' + (c.mutating ? ' checked' : '') + '> <code>' + esc(name) + '</code></div>' +
+            '<span>' + capSelect(name, "category", ["data","system","browser","network","ai"], c.category || "system") + '</span>' +
+            '<span>' + capSelect(name, "risk", ["low","medium","high","critical"], c.risk || "high") + '</span>' +
+            '<span>' + capSelect(name, "approval", ["none","task_intent","explicit"], c.approval || "explicit") + '</span>' +
+            '<span><input type="text" class="cap-roles-input" data-cap="' + esc(name) + '" value="' + esc((c.roles||[]).join(", ")) + '" style="width:100%;font-size:0.76rem"></span>' +
             '<button class="btn btn-red btn-sm cap-del" data-name="' + esc(name) + '">✕</button>'
           el.appendChild(row)
         }
         if (!Object.keys(_capTools).length) el.innerHTML = '<div class="empty-msg">No capabilities defined</div>'
         $("ro-toggle").checked = allMutExplicit && Object.keys(_capTools).length > 0
+        el.querySelectorAll(".cap-row select").forEach(function(s) { s.addEventListener("change", function() {
+          saveCap(s.dataset.cap, s.dataset.field, s.value)
+        })})
+        el.querySelectorAll(".cap-mut").forEach(function(cb) { cb.addEventListener("change", function() {
+          saveCap(cb.dataset.cap, "mutating", cb.checked)
+        })})
+        el.querySelectorAll(".cap-roles-input").forEach(function(inp) { inp.addEventListener("blur", function() {
+          saveCap(inp.dataset.cap, "roles", inp.value.split(",").map(function(r){return r.trim()}).filter(Boolean))
+        })})
         el.querySelectorAll(".cap-del").forEach(function(b) { b.addEventListener("click", async function() {
           if (!confirm("Remove capability " + b.dataset.name + " from governance?")) return
           try { await api("/setup/governance/tool/" + encodeURIComponent(b.dataset.name) + "?workspaceId=" + activeWorkspace, "DELETE"); loadCaps() } catch(e) { alert(e.message) }
@@ -354,7 +416,96 @@
     }
     $("wk-refresh").addEventListener("click", loadWorkers)
 
-    window.onWorkspaceChange = function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes() }
-    initWorkspace().then(function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadWorkers() })
+    // ── Admin Users ─────────────────────────────────────────────────
+    var _adminUsers = []
+    function auSelect(idx, field, options, current) {
+      var s = '<select data-idx="' + idx + '" data-field="' + field + '">'
+      for (var i = 0; i < options.length; i++) s += '<option' + (options[i] === current ? ' selected' : '') + '>' + esc(options[i]) + '</option>'
+      return s + '</select>'
+    }
+    async function saveUsers() {
+      try {
+        var d = await api("/setup/admin/users", "PUT", { users: _adminUsers })
+        _adminUsers = d.users || []; renderUsers()
+      } catch (e) { alert(e.message) }
+    }
+    async function loadUsers() {
+      try {
+        var d = await api("/setup/admin/users")
+        _adminUsers = d.users || []; renderUsers()
+      } catch (e) { $("au-list").innerHTML = '<div class="empty-msg">Error: ' + esc(e.message) + '</div>' }
+    }
+    function renderUsers() {
+      var el = $("au-list"); el.innerHTML = ""
+      var roles = ["super_admin","operator","observer","system_admin"]
+      var modes = ["full","agent_only","query_only","shell_only"]
+      _adminUsers.forEach(function(u, i) {
+        var row = document.createElement("div")
+        row.className = "au-row"
+        row.innerHTML =
+          '<span><input type="text" data-idx="' + i + '" data-field="phone" value="' + esc(u.phone) + '"></span>' +
+          '<span><input type="text" data-idx="' + i + '" data-field="name" value="' + esc(u.name || "") + '"></span>' +
+          '<span>' + auSelect(i, "role", roles, u.role || "operator") + '</span>' +
+          '<span>' + auSelect(i, "mode", modes, u.mode || "full") + '</span>' +
+          '<span><input type="text" data-idx="' + i + '" data-field="pin" value="' + esc(u.pin || "") + '" style="font-family:monospace"></span>' +
+          '<button class="btn btn-red btn-sm" data-idx="' + i + '">✕</button>'
+        el.appendChild(row)
+      })
+      if (!_adminUsers.length) el.innerHTML = '<div class="empty-msg">No admin users</div>'
+      el.querySelectorAll("select").forEach(function(s) { s.addEventListener("change", function() {
+        _adminUsers[Number(s.dataset.idx)][s.dataset.field] = s.value; saveUsers()
+      })})
+      el.querySelectorAll("input").forEach(function(inp) { inp.addEventListener("blur", function() {
+        _adminUsers[Number(inp.dataset.idx)][inp.dataset.field] = inp.value.trim(); saveUsers()
+      })})
+      el.querySelectorAll("button").forEach(function(b) { b.addEventListener("click", function() {
+        if (!confirm("Remove user " + (_adminUsers[Number(b.dataset.idx)].name || _adminUsers[Number(b.dataset.idx)].phone) + "?")) return
+        _adminUsers.splice(Number(b.dataset.idx), 1); saveUsers()
+      })})
+    }
+    $("au-refresh").addEventListener("click", loadUsers)
+    $("au-add-btn").addEventListener("click", function() {
+      var phone = $("au-phone").value.trim(); if (!phone) { alert("Phone required"); return }
+      _adminUsers.push({ phone: phone, name: $("au-name").value.trim(), role: $("au-role").value, mode: $("au-mode").value, pin: $("au-pin").value.trim() })
+      $("au-phone").value = ""; $("au-name").value = ""; $("au-pin").value = ""
+      saveUsers()
+    })
+
+    // ── Admin Shell Patterns ─────────────────────────────────────────────
+    var _shellPatterns = []
+    async function loadShell() {
+      try {
+        var d = await api("/setup/admin/shell-patterns")
+        _shellPatterns = d.patterns || []
+        renderShell()
+      } catch (e) { $("sh-list").innerHTML = '<span class="empty-msg">Error: ' + esc(e.message) + '</span>' }
+    }
+    function renderShell() {
+      var el = $("sh-list"); el.innerHTML = ""
+      _shellPatterns.forEach(function(p, i) {
+        var tag = document.createElement("span")
+        tag.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:0.82rem"
+        tag.innerHTML = '<code>' + esc(p) + '</code><button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.9rem;padding:0 2px" data-i="' + i + '">✕</button>'
+        el.appendChild(tag)
+      })
+      if (!_shellPatterns.length) el.innerHTML = '<span class="empty-msg">No shell commands allowed</span>'
+      el.querySelectorAll("button").forEach(function(b) { b.addEventListener("click", function() {
+        _shellPatterns.splice(Number(b.dataset.i), 1); saveShell()
+      })})
+    }
+    async function saveShell() {
+      try { var d = await api("/setup/admin/shell-patterns", "PUT", { patterns: _shellPatterns }); _shellPatterns = d.patterns || []; renderShell() }
+      catch (e) { alert(e.message) }
+    }
+    $("sh-refresh").addEventListener("click", loadShell)
+    $("sh-add").addEventListener("click", function() {
+      var v = $("sh-new").value.trim(); if (!v) return
+      if (_shellPatterns.indexOf(v) === -1) _shellPatterns.push(v)
+      $("sh-new").value = ""; saveShell()
+    })
+    $("sh-new").addEventListener("keydown", function(e) { if (e.key === "Enter") { e.preventDefault(); $("sh-add").click() } })
+
+    window.onWorkspaceChange = function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadShell(); loadUsers() }
+    initWorkspace().then(function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadWorkers(); loadShell(); loadUsers() })
   </script>
 </body></html>

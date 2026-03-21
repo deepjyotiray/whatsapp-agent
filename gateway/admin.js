@@ -18,42 +18,52 @@ function getAdminCfg() { return getSettings().admin }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-function isAdmin(phone) {
-    return String(phone).replace(/@.*$/, "").replace(/\D/g, "").endsWith(String(getAdminCfg().number).replace(/\D/g, ""))
+function getUsers() {
+    const cfg = getAdminCfg()
+    if (cfg.users?.length) return cfg.users
+    // backward compat: single admin.number + admin.pin
+    if (cfg.number) return [{ phone: String(cfg.number), name: "Admin", role: cfg.role || "super_admin", mode: "full", pin: cfg.pin || "" }]
+    return []
 }
 
-// Returns { isAdmin: true, mode, payload } or { isAdmin: false }
-function parseAdminMessage(message) {
+function normalizePhone(p) { return String(p || "").replace(/@.*$/, "").replace(/\D/g, "") }
+
+// Returns matched user object or null
+function isAdmin(phone) {
+    const digits = normalizePhone(phone)
+    return getUsers().find(u => digits.endsWith(normalizePhone(u.phone))) || null
+}
+
+// Returns { isAdmin: true, user, payload } or { isAdmin: false }
+function parseAdminMessage(message, phone) {
     if (!message) return { isAdmin: false }
-    const trimmed = message.trim()
+    const user = isAdmin(phone)
+    if (!user) return { isAdmin: false }
 
-    // <keyword> <pin> <command or query>
-    const parts = trimmed.split(/\s+/)
-    if (parts[0].toLowerCase() === getAdminCfg().keyword.toLowerCase() && parts[1] === getAdminCfg().pin) {
-        return { isAdmin: true, payload: parts.slice(2).join(" ") }
+    const parts = message.trim().split(/\s+/)
+    const keyword = getAdminCfg().keyword || "ray"
+    if (parts[0].toLowerCase() !== keyword.toLowerCase()) return { isAdmin: false }
+
+    const userPin = user.pin !== undefined ? user.pin : (getAdminCfg().pin || "")
+    if (userPin === "") {
+        // no pin required — everything after keyword is payload
+        return { isAdmin: true, user, payload: parts.slice(1).join(" ") }
     }
-
-    return { isAdmin: false }
+    if (parts[1] !== userPin) return { isAdmin: false }
+    return { isAdmin: true, user, payload: parts.slice(2).join(" ") }
 }
 
 // ── Shell execution ───────────────────────────────────────────────────────────
 
-const SHELL_PATTERNS = [
-    /^pm2\s/i,
-    /^tail\s/i,
-    /^cat\s/i,
-    /^ls\s*/i,
-    /^df\s*/i,
-    /^du\s/i,
-    /^uptime/i,
-    /^node\s/i,
-    /^npm\s/i,
-    /^kill\s/i,
-    /^ping\s/i,
-]
+const DEFAULT_SHELL_PATTERNS = ["pm2", "tail", "cat", "ls", "df", "du", "uptime", "node", "npm", "kill", "ping"]
+
+function getShellPatterns() {
+    return getAdminCfg().shell_patterns || DEFAULT_SHELL_PATTERNS
+}
 
 function looksLikeShell(text) {
-    return SHELL_PATTERNS.some(p => p.test(text.trim()))
+    const cmd = text.trim().split(/\s/)[0].toLowerCase()
+    return getShellPatterns().some(p => p.toLowerCase() === cmd)
 }
 
 function runShell(cmd) {
@@ -207,9 +217,11 @@ Answer:`
 async function handleAdmin(payload, options = {}) {
     if (!payload) return "⚙️ Admin ready. Usage: `ray <pin> <command or question>`\n`ray <pin> agent <task>` for full agentic mode"
     const workspaceId = options.workspaceId || getActiveWorkspace()
-    const role = options.role || getAdminCfg()?.role || "super_admin"
+    const user = options.user || {}
+    const role = user.role || options.role || getAdminCfg()?.role || "super_admin"
+    const mode = user.mode || "full"
 
-    logger.info({ payload }, "admin: handling request")
+    logger.info({ payload, user: user.name, role, mode }, "admin: handling request")
 
     if (/^approvals\b/i.test(payload)) {
         const approvals = listApprovals("pending", workspaceId)
@@ -220,6 +232,7 @@ async function handleAdmin(payload, options = {}) {
     }
 
     if (/^approve\s+/i.test(payload)) {
+        if (mode === "query_only") return "⛔ Your access level does not allow approvals."
         const id = payload.replace(/^approve\s+/i, "").trim()
         const approval = approveRequest(id, workspaceId)
         if (!approval) return `Approval ${id} not found.`
@@ -228,18 +241,21 @@ async function handleAdmin(payload, options = {}) {
 
     // Agentic mode — full OpenAI function-calling loop
     if (/^agent\s+/i.test(payload)) {
+        if (mode === "query_only" || mode === "shell_only") return `⛔ Your access level (${mode}) does not allow agentic mode.`
         const task = payload.replace(/^agent\s+/i, "").trim()
-        logger.info({ task }, "admin: agentic mode")
-        return await runAgentLoop(task, { workspaceId })
+        logger.info({ task, user: user.name }, "admin: agentic mode")
+        return await runAgentLoop(task, { workspaceId, role })
     }
 
     // Auto-route mutations to agentic mode
     if (/\b(add|record|insert|update|change|set|delete|remove|mark)\b/i.test(payload)) {
-        logger.info({ payload }, "admin: mutation detected, routing to agent")
-        return await runAgentLoop(payload, { workspaceId })
+        if (mode === "query_only" || mode === "shell_only") return `⛔ Your access level (${mode}) does not allow mutations.`
+        logger.info({ payload, user: user.name }, "admin: mutation detected, routing to agent")
+        return await runAgentLoop(payload, { workspaceId, role })
     }
 
     if (looksLikeShell(payload)) {
+        if (mode === "query_only" || mode === "agent_only") return `⛔ Your access level (${mode}) does not allow shell commands.`
         const result = await runShell(payload)
         return `\`\`\`\n${result}\n\`\`\``
     }
@@ -321,4 +337,4 @@ registerGuide({
     },
 })
 
-module.exports = { isAdmin, parseAdminMessage, handleAdmin, handleAdminImage }
+module.exports = { isAdmin, parseAdminMessage, handleAdmin, handleAdminImage, getShellPatterns, getUsers }

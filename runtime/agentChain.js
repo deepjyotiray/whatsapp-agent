@@ -31,8 +31,8 @@ class AgentChain {
 
         // 0. Admin intercept
         if (isAdmin(phone)) {
-            const admin = parseAdminMessage(message)
-            if (admin.isAdmin) return await handleAdmin(admin.payload)
+            const admin = parseAdminMessage(message, phone)
+            if (admin.isAdmin) return await handleAdmin(admin.payload, { user: admin.user })
         }
 
         // 1. Sanitizer

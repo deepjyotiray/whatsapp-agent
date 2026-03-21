@@ -112,6 +112,10 @@ This file is gitignored. Create it with your real values:
     "number": "91XXXXXXXXXX",
     "keyword": "admin",
     "pin": "<pick a 4-6 digit PIN>",
+    "users": [
+      { "phone": "91XXXXXXXXXX", "name": "Owner", "role": "super_admin", "mode": "full", "pin": "<your-pin>" }
+    ],
+    "shell_patterns": ["pm2", "tail", "cat", "ls", "df", "du", "uptime", "node", "npm", "kill", "ping"],
     "db_path": "<absolute path to ray-orders-backend/orders.db>",
     "business_name": "Ray's Home Kitchen",
     "agent_llm": {
@@ -126,8 +130,10 @@ This file is gitignored. Create it with your real values:
 |---|---|
 | `llm.api_key` | Your OpenAI API key (starts with `sk-`) |
 | `api.secret` | **Must match** the `WHATSAPP_AGENT_SECRET` in the orders backend `.env` |
-| `admin.number` | Your WhatsApp number with country code, no `+` (e.g. `919326492088`) |
-| `admin.pin` | PIN you'll type after the admin keyword to authenticate |
+| `admin.number` | Fallback admin phone with country code, no `+` (e.g. `919326492088`) |
+| `admin.pin` | Fallback PIN (used if `admin.users` is empty) |
+| `admin.users` | Array of admin users — each with `phone`, `name`, `role`, `mode`, `pin`. Add more users later via the Setup UI (Tools → Admin Users) |
+| `admin.shell_patterns` | Allowed shell command prefixes. Add more via the Setup UI (Tools → Admin Shell Commands) |
 | `admin.db_path` | Absolute path to `orders.db` (e.g. `/Users/you/ray-orders-backend/orders.db`) |
 
 ### 2b — Link the database
@@ -227,13 +233,15 @@ Send these messages from **any phone** (not the linked one) to the WhatsApp numb
 
 ### Test admin mode
 
-From the **admin phone** (the number in `settings.json → admin.number`), send:
+From the **admin phone** (any number registered in `settings.json → admin.users`), send:
 
 ```
 admin <your-pin> show today's orders
 ```
 
 The admin agent will query the database and respond with a summary.
+
+To add more admin users later, use the Setup UI at `http://localhost:3010/tools` → Admin Users section.
 
 ---
 
@@ -353,9 +361,10 @@ node index.js --agent agents/restaurant.yml
 Check `policy/policy.yml` — the intent must be in `allowed_intents`. Also check that `domain_keywords` includes words the customer might use.
 
 ### Admin commands don't work
-- Verify `admin.number` in `config/settings.json` matches your WhatsApp number (format: `91XXXXXXXXXX`, no `+`)
-- Message format: `admin <pin> <your command>`
-- The admin phone must be the one sending the message
+- Verify the phone number is registered in `admin.users` array in `config/settings.json` (format: `91XXXXXXXXXX`, no `+`)
+- Message format: `admin <pin> <your command>` — the PIN must match the user's `pin` field
+- If `admin.users` is empty, falls back to `admin.number` + `admin.pin`
+- Check the user's `mode` — `query_only` users can't run shell or agent commands
 
 ### Orders aren't created
 - Check that `order_create.backend_url` in `restaurant.yml` points to the running orders backend (`http://localhost:3000`)
@@ -377,7 +386,7 @@ Before going live, verify every item:
 - [ ] `ray-orders-backend` is running on `:3000` with menu data loaded
 - [ ] `config/settings.json` has real OpenAI API key
 - [ ] `config/settings.json` → `api.secret` matches orders backend `WHATSAPP_AGENT_SECRET`
-- [ ] `config/settings.json` → `admin.number` is your WhatsApp number (no `+`)
+- [ ] `config/settings.json` → `admin.users` has at least one user with your WhatsApp number
 - [ ] `config/settings.json` → `admin.db_path` is the absolute path to `orders.db`
 - [ ] `data/orders.db` symlink exists and points to the real database
 - [ ] `agents/restaurant.yml` → `upi_handle` is your real UPI ID

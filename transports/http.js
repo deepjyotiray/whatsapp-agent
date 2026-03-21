@@ -19,7 +19,7 @@ const {
 const { chatWithDraft } = require("../setup/chatSandbox")
 const { getGovernanceSnapshot, updatePolicy } = require("../gateway/adminGovernance")
 const { listApprovals, approveRequest } = require("../gateway/adminApprovals")
-const { handleAdmin, handleAdminImage } = require("../gateway/admin")
+const { handleAdmin, handleAdminImage, getShellPatterns, getUsers } = require("../gateway/admin")
 const { listWorkers } = require("../gateway/adminWorkers")
 const { loadNotes, saveNotes, generateNotes } = require("../core/dataModelNotes")
 const { getPromptGuides, getPromptGuide, addCustomGuide, removeCustomGuide } = require("../core/promptGuides")
@@ -484,6 +484,54 @@ const server = http.createServer(async (req, res) => {
             sendJson(res, 200, { ok: true, approval })
         } catch (err) {
             logger.error({ err }, "setup approval action failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/admin/users") {
+        sendJson(res, 200, { ok: true, users: getUsers() })
+        return
+    }
+
+    if (req.method === "PUT" && pathname === "/setup/admin/users") {
+        try {
+            const { users } = await readBody(req)
+            if (!Array.isArray(users)) { sendJson(res, 400, { error: "users must be an array" }); return }
+            const cleaned = users.filter(u => u.phone).map(u => ({
+                phone: String(u.phone).trim(),
+                name: String(u.name || "").trim(),
+                role: u.role || "operator",
+                mode: u.mode || "full",
+                pin: u.pin !== undefined ? String(u.pin) : "",
+            }))
+            const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
+            cfg.admin.users = cleaned
+            fs.writeFileSync(path.resolve(__dirname, "../config/settings.json"), JSON.stringify(cfg, null, 2))
+            delete require.cache[require.resolve("../config/settings.json")]
+            sendJson(res, 200, { ok: true, users: cleaned })
+        } catch (err) {
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/admin/shell-patterns") {
+        sendJson(res, 200, { ok: true, patterns: getShellPatterns() })
+        return
+    }
+
+    if (req.method === "PUT" && pathname === "/setup/admin/shell-patterns") {
+        try {
+            const { patterns } = await readBody(req)
+            if (!Array.isArray(patterns)) { sendJson(res, 400, { error: "patterns must be an array" }); return }
+            const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
+            cfg.admin.shell_patterns = patterns.map(p => String(p).trim()).filter(Boolean)
+            fs.writeFileSync(path.resolve(__dirname, "../config/settings.json"), JSON.stringify(cfg, null, 2))
+            // bust require cache so getSettings() picks up new values
+            delete require.cache[require.resolve("../config/settings.json")]
+            sendJson(res, 200, { ok: true, patterns: cfg.admin.shell_patterns })
+        } catch (err) {
             sendJson(res, 500, { error: err.message })
         }
         return

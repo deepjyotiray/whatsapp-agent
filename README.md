@@ -45,14 +45,29 @@ The result: every layer is explicit and traceable. You can follow a message from
 
 ## What the owner can do
 
-From their own WhatsApp number (keyword + PIN), the HTTP API, or the CLI:
+From any registered admin phone number (keyword + per-user PIN), the HTTP API, or the CLI:
 
 - Shell commands: `ray <pin> pm2 status`, `ray <pin> tail -n 50 logs/agent.log`
 - Natural language business queries: `ray <pin> how much profit this month`, `ray <pin> which orders are unpaid`, `ray <pin> show today's orders`
-- Mac automation: `ray <pin> set volume to 30`, `ray <pin> quit Chrome`, `ray <pin> show notification hello`
-- Browser automation: `ray <pin> open youtube and play lo-fi music`, `ray <pin> search DuckDuckGo for X and summarise`
-- Skills: `ray <pin> convert this text to speech`, `ray <pin> generate an image of a sunset`, `ray <pin> transcribe audio.mp3`
-- Security: `ray <pin> recon https://mysite.com`, `ray <pin> load test https://mysite.com`
+- Mac automation: `ray <pin> agent set volume to 30`, `ray <pin> agent quit Chrome`, `ray <pin> agent show notification hello`
+- Browser automation: `ray <pin> agent open youtube and play lo-fi music`, `ray <pin> agent search DuckDuckGo for X and summarise`
+- Skills: `ray <pin> agent convert this text to speech`, `ray <pin> agent generate an image of a sunset`, `ray <pin> agent transcribe audio.mp3`
+- Security: `ray <pin> agent recon https://mysite.com`, `ray <pin> agent load test https://mysite.com`
+
+### Multi-User Admin Access
+
+Multiple users can be granted admin access with different permission levels. Each user has their own phone number, PIN, role, and access mode.
+
+| Mode | What it allows |
+|---|---|
+| `full` | Agent + direct shell + DB queries (owner-level) |
+| `agent_only` | Only `ray <pin> agent <task>` and DB queries — no direct shell |
+| `query_only` | Only natural language DB queries — no shell, no agent |
+| `shell_only` | Only direct shell commands and DB queries — no agent |
+
+Roles (`super_admin`, `operator`, `observer`, `system_admin`) control which tools the governance layer allows. Modes control which command paths are available.
+
+Managed via the Setup UI (Tools → Admin Users) or `PUT /setup/admin/users`.
 
 ## How It Works — Plain English
 
@@ -698,6 +713,10 @@ Body:
 | Customer message | POST | `{{base_url}}/message` | `x-secret: {{secret}}` | `{"phone":"919000000000","message":"show me the menu"}` |
 | Admin query | POST | `{{base_url}}/setup/admin/run` | — | `{"mode":"query","task":"how much did I make today"}` |
 | Admin agent | POST | `{{base_url}}/setup/admin/run` | — | `{"mode":"agent","task":"show unpaid orders"}` |
+| Admin users | GET | `{{base_url}}/setup/admin/users` | — | — |
+| Update admin users | PUT | `{{base_url}}/setup/admin/users` | — | `{"users":[{"phone":"91...","name":"...","role":"operator","mode":"agent_only","pin":"1234"}]}` |
+| Shell patterns | GET | `{{base_url}}/setup/admin/shell-patterns` | — | — |
+| Update shell patterns | PUT | `{{base_url}}/setup/admin/shell-patterns` | — | `{"patterns":["pm2","tail","osascript"]}` |
 | Prompt guides | GET | `{{base_url}}/setup/agent/prompts` | — | — |
 | Add custom guide | POST | `{{base_url}}/setup/agent/prompts` | — | `{"id":"my-guide","name":"My guide","prompt":"You are..."}` |
 | Delete custom guide | DELETE | `{{base_url}}/setup/agent/prompts` | — | `{"id":"my-guide"}` |
@@ -720,9 +739,11 @@ Body:
 | `llm.apiKey` | API key (OpenAI / Anthropic) |
 | `api.port` | Internal send API port (default: `3001`) |
 | `api.secret` | Shared secret for inter-service calls |
-| `admin.number` | Your phone in international format e.g. `919XXXXXXXXX` |
+| `admin.number` | Fallback admin phone in international format e.g. `919XXXXXXXXX` (used if `admin.users` is empty) |
 | `admin.keyword` | Trigger keyword for admin channel |
-| `admin.pin` | PIN required alongside the keyword |
+| `admin.pin` | Fallback PIN (used if `admin.users` is empty) |
+| `admin.users` | Array of admin users — each with `phone`, `name`, `role`, `mode`, `pin` |
+| `admin.shell_patterns` | Array of allowed shell command prefixes (e.g. `["pm2", "tail", "osascript"]`) |
 | `admin.db_path` | Absolute path to your SQLite database |
 | `admin.business_name` | Used in admin LLM prompts |
 | `admin.agent_llm.model` | Model for admin agent loop (default: `gpt-4o-mini`) |
@@ -793,30 +814,95 @@ agent:
 
 No code changes required.
 
+## Setup UI
+
+The web-based Setup UI at `http://localhost:3010` provides full management of the agent without touching config files.
+
+| Page | URL | What you can do |
+|---|---|---|
+| Dashboard | `/` | Workspace overview, agent health |
+| Profile | `/profile` | Business profile, custom fields (scoped to specific tools) |
+| Chat | `/chat` | Test messages in Live/Draft/Auto mode |
+| Admin | `/admin` | Run admin queries and agent tasks |
+| Tools | `/tools` | Manage intents, tools, capabilities, prompt guides, data model notes, admin users, shell commands, workers |
+| Intercept | `/intercept` | Debug interceptor — hold/approve/reject live WhatsApp messages |
+| Control | `/control` | Preview → Approve → Execute workflow, execution policies |
+
+### Tools Page Capabilities
+
+The Tools page (`/tools`) is the central management hub:
+
+- **Intents** — view, add, delete intents with AI-generated hints
+- **Tools** — view, add, delete tool configurations
+- **Capabilities** — inline-editable governance grid: mutating toggle, category/risk/approval dropdowns, roles text input. Read-Only Mode toggle sets all mutating tools to explicit approval
+- **Prompt Guides** — view built-in + custom guides, add/delete custom guides with AI generation
+- **Data Model Notes** — view/edit/AI-regenerate database schema notes
+- **Admin Users** — manage who can send admin commands: phone, name, role dropdown, mode dropdown, per-user PIN. Inline-editable with auto-save
+- **Admin Shell Commands** — manage allowed shell command prefixes as tags. Add/remove instantly
+- **Workers** — view registered worker types
+
 ## Admin Channel
 
+Multiple users can be registered as admins, each with their own PIN, role, and access mode.
+
+### Configuration
+
+```json
+"admin": {
+  "keyword": "ray",
+  "users": [
+    { "phone": "919594614752", "name": "Deep", "role": "super_admin", "mode": "full", "pin": "122333" },
+    { "phone": "919876543210", "name": "Mom", "role": "operator", "mode": "agent_only", "pin": "4567" },
+    { "phone": "919123456789", "name": "Helper", "role": "observer", "mode": "query_only", "pin": "" }
+  ],
+  "shell_patterns": ["pm2", "tail", "cat", "ls", "df", "du", "uptime", "node", "npm", "kill", "ping", "pmset", "osascript"]
+}
 ```
-<keyword> <pin> pm2 list
-<keyword> <pin> pm2 restart whatsapp-agent
-<keyword> <pin> tail -n 50 logs/agent.log
-<keyword> <pin> how much profit this month
-<keyword> <pin> which orders are unpaid
-<keyword> <pin> show today's active orders
-<keyword> <pin> overall revenue this year
-<keyword> <pin> set volume to 30
-<keyword> <pin> open youtube and play lo-fi beats
-<keyword> <pin> recon https://mysite.com
-<keyword> <pin> load test https://mysite.com 50 requests
-<keyword> <pin> convert "hello world" to speech and send it
-<keyword> <pin> generate an image of a mountain at sunset
+
+| Field | Description |
+|---|---|
+| `phone` | Phone number in international format (no `+`) |
+| `name` | Display name (for logging and UI) |
+| `role` | Governance role — `super_admin`, `operator`, `observer`, `system_admin` |
+| `mode` | Access mode — `full`, `agent_only`, `query_only`, `shell_only` |
+| `pin` | Per-user PIN (empty string = no PIN required, just keyword) |
+
+Backward compatible: if `admin.users` is empty, falls back to `admin.number` + `admin.pin`.
+
+### Access Modes
+
+| Mode | Shell | Agent | DB Queries | Mutations | Approvals |
+|---|---|---|---|---|---|
+| `full` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `agent_only` | ❌ | ✅ | ✅ | ✅ (via agent) | ✅ |
+| `query_only` | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `shell_only` | ✅ | ❌ | ✅ | ❌ | ❌ |
+
+### Shell Patterns
+
+Direct shell commands (without `agent` prefix) bypass governance entirely. Only commands whose first word matches a pattern in `admin.shell_patterns` are allowed. Configurable via the Setup UI (Tools → Admin Shell Commands) or `PUT /setup/admin/shell-patterns`.
+
+### Example Commands
+
+```
+ray <pin> pm2 list                              # direct shell (mode: full or shell_only)
+ray <pin> pm2 restart secure-agent               # direct shell
+ray <pin> osascript -e "set volume output volume 80"  # direct shell (Mac control)
+ray <pin> how much profit this month             # DB query (all modes)
+ray <pin> agent show unpaid orders               # agentic mode (mode: full or agent_only)
+ray <pin> agent set volume to 30                 # agentic mode (Mac automation via LLM)
+ray <pin> agent open youtube and play lo-fi      # agentic mode (browser automation)
+ray <pin> agent recon https://mysite.com         # agentic mode (security scan)
+ray <pin> approvals                              # list pending approvals
+ray <pin> approve apr-xxxx-xxxx                  # approve a blocked tool call
 ```
 
 ## Security
 
 - LLM is sandboxed — it only sees what the pipeline explicitly feeds it. It cannot select tools, access databases, or run commands
 - 5-layer input sanitizer — 72 regex patterns (injection, code exec, path traversal, XSS, SQL injection) + Unicode normalization + structural checks for spam and encoded payloads
-- Admin channel works from one registered phone number + correct PIN (WhatsApp) or session cookie (HTTP API)
-- Shell execution uses a command prefix allowlist
+- Admin channel supports multiple registered phone numbers, each with their own PIN, role, and access mode (full/agent_only/query_only/shell_only)
+- Shell execution uses a configurable command prefix allowlist (managed via UI or `PUT /setup/admin/shell-patterns`)
 - Restricted intents fall through to the next agent — never hard-blocked from the customer's perspective
 - WhatsApp session keys (`auth/`) are never committed
 - All inter-service calls use a shared secret header (`x-secret`)

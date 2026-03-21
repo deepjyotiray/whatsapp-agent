@@ -194,23 +194,61 @@ The admin pipeline handles two modes: **query** (read-only SQL) and **agent** (f
 
 | Source | Auth | Route |
 |---|---|---|
-| API: `POST /setup/admin/run` | Session cookie | `handleAdmin(payload)` |
-| WhatsApp: `ray <pin> <command>` | Phone number + keyword + PIN | `handleAdmin(payload)` |
-| CLI: `ray <pin> <command>` | Keyword + PIN | `handleAdmin(payload)` |
+| API: `POST /setup/admin/run` | Session cookie | `handleAdmin(payload, { user })` |
+| WhatsApp: `ray <pin> <command>` | Phone number match + keyword + per-user PIN | `handleAdmin(payload, { user })` |
+| CLI: `ray <pin> <command>` | Keyword + PIN | `handleAdmin(payload, { user })` |
+
+### Multi-User Admin
+
+**File:** `gateway/admin.js` → `getUsers()`, `isAdmin()`, `parseAdminMessage()`
+
+Multiple users can be registered as admins in `config/settings.json` under `admin.users`. Each user has:
+
+| Field | Description |
+|---|---|
+| `phone` | Phone number (international format, no `+`) |
+| `name` | Display name for logging |
+| `role` | Governance role (`super_admin`, `operator`, `observer`, `system_admin`) |
+| `mode` | Access mode (`full`, `agent_only`, `query_only`, `shell_only`) |
+| `pin` | Per-user PIN (empty = no PIN required) |
+
+`isAdmin(phone)` checks all registered users and returns the matched user object (or `null`). `parseAdminMessage(message, phone)` uses the matched user's PIN for validation. The user object is passed through to `handleAdmin()` which enforces mode restrictions before routing.
+
+Backward compatible: if `admin.users` is empty, falls back to `admin.number` + `admin.pin`.
+
+### Configurable Shell Patterns
+
+**File:** `gateway/admin.js` → `getShellPatterns()`, `looksLikeShell()`
+
+Direct shell commands (without `agent` prefix) bypass governance entirely. The allowed command prefixes are stored in `config/settings.json` under `admin.shell_patterns` (array of strings like `["pm2", "tail", "osascript"]`). Configurable via the Setup UI (Tools → Admin Shell Commands) or `PUT /setup/admin/shell-patterns`.
+
+Falls back to a hardcoded default list if `admin.shell_patterns` is not set.
 
 ### Mode routing
 
 **File:** `gateway/admin.js` → `handleAdmin()`
 
+The user's `mode` is enforced before routing:
+
+| Mode | Shell | Agent | Mutations | DB Queries | Approvals |
+|---|---|---|---|---|---|
+| `full` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `agent_only` | ❌ | ✅ | ✅ (via agent) | ✅ | ✅ |
+| `query_only` | ❌ | ❌ | ❌ | ✅ | ❌ |
+| `shell_only` | ✅ | ❌ | ❌ | ✅ | ❌ |
+
 ```
 Payload
   │
   ├── Starts with "approvals" ──► List pending approvals
-  ├── Starts with "approve <id>" ──► Approve a blocked tool call
-  ├── Starts with "agent " ──► Full agent loop (mode: agent)
-  ├── Matches shell pattern ──► Direct shell execution
-  └── Anything else ──► Dynamic SQL query (mode: query)
+  ├── Starts with "approve <id>" ──► Approve a blocked tool call (blocked in query_only)
+  ├── Starts with "agent " ──► Full agent loop (blocked in query_only, shell_only)
+  ├── Contains mutation verb ──► Auto-routes to agent (blocked in query_only, shell_only)
+  ├── Matches shell pattern ──► Direct shell execution (blocked in query_only, agent_only)
+  └── Anything else ──► Dynamic SQL query (all modes)
 ```
+
+The user's `role` is passed to `authorizeToolCall()` for governance checks within the agent loop.
 
 ### Query Mode — Dynamic SQL Pipeline
 

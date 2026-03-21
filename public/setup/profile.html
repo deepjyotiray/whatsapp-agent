@@ -83,7 +83,20 @@
       </div>
     </form>
 
-    <div class="btn-group" style="margin-bottom:16px">
+    <!-- Custom Fields -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-head"><h3>Custom Fields</h3></div>
+      <p style="font-size:0.82rem;color:var(--muted);margin-bottom:10px">Add custom key-value data. Optionally restrict a field to specific tools (leave blank = visible to all tools).</p>
+      <div id="cf-list"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-top:10px;align-items:end">
+        <label class="field"><span>Key</span><input id="cf-key" placeholder="e.g. loyaltyProgram"></label>
+        <label class="field"><span>Value</span><input id="cf-val" placeholder="e.g. Buy 5 get 1 free"></label>
+        <label class="field"><span>Tools (comma-sep, blank=all)</span><input id="cf-tools" placeholder="e.g. concierge,support_faq"></label>
+        <button class="btn btn-primary btn-sm" id="cf-add">Add</button>
+      </div>
+    </div>
+
+    <div class="btn-group" style="margin-bottom:16px;margin-top:16px">
       <button class="btn btn-ghost" id="save-btn">Save Profile</button>
       <button class="btn btn-primary" id="gen-btn">Generate Draft</button>
       <button class="btn btn-green" id="promote-btn">Promote Live</button>
@@ -106,7 +119,34 @@
     buildShell("profile")
     const form = $("pf")
 
+    var _customFields = []
+
+    function renderCF() {
+      var el = $("cf-list"); el.innerHTML = ""
+      for (var i = 0; i < _customFields.length; i++) {
+        var f = _customFields[i]
+        var row = document.createElement("div")
+        row.style.cssText = "display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.84rem;align-items:center"
+        row.innerHTML = '<code>' + esc(f.key) + '</code><span>' + esc(f.value) + '</span><span style="color:var(--muted);font-size:0.78rem">' + (f.tools && f.tools.length ? esc(f.tools.join(", ")) : '<em>all tools</em>') + '</span><button class="btn btn-red btn-sm cf-del" data-idx="' + i + '">\u2715</button>'
+        el.appendChild(row)
+      }
+      el.querySelectorAll(".cf-del").forEach(function(b) {
+        b.addEventListener("click", function() { _customFields.splice(Number(b.dataset.idx), 1); renderCF() })
+      })
+    }
+
+    $("cf-add").addEventListener("click", function() {
+      var k = $("cf-key").value.trim(), v = $("cf-val").value.trim()
+      if (!k || !v) return
+      var tools = $("cf-tools").value.trim() ? $("cf-tools").value.split(",").map(function(t){return t.trim()}).filter(Boolean) : []
+      _customFields.push({ key: k, value: v, tools: tools })
+      $("cf-key").value = ""; $("cf-val").value = ""; $("cf-tools").value = ""
+      renderCF()
+    })
+
     function applyProfile(p) {
+      _customFields = Array.isArray(p.customFields) ? p.customFields : []
+      renderCF()
       for (const [k, v] of Object.entries(p || {})) {
         const f = form.elements[k]; if (!f) continue
         if (f.type === "checkbox") f.checked = !!v; else f.value = v || ""
@@ -141,7 +181,7 @@
 
     $("save-btn").addEventListener("click", async () => {
       setText("status", "Saving…")
-      const p = formData(); p.workspaceId = activeWorkspace
+      const p = formData(); p.workspaceId = activeWorkspace; p.customFields = _customFields
       await api("/setup/profile", "POST", p)
       setText("status", "✓ Profile saved.")
     })
