@@ -1125,11 +1125,15 @@ async function runOpenClawAgent(task, options = {}) {
         if (!options.noContext) {
             // Admin flow: provide DB context and schema to OpenClaw
             try {
-                const { buildDbContext, getDbSchema } = require("./admin")
+                const { buildDbContext, getDbSchema, selectRelevantTables } = require("./admin")
                 const profile = loadProfile(workspaceId)
                 const dbPath = profile.dbPath || settings.admin.db_path
-                const dbContext = await buildDbContext(workspaceId)
-                const schema = getDbSchema(dbPath)
+                
+                // Optimization: identify relevant tables for the task to reduce token usage
+                const relevantTables = await selectRelevantTables(task, workspaceId)
+                
+                const dbContext = await buildDbContext(workspaceId, relevantTables)
+                const schema = getDbSchema(dbPath, relevantTables)
                 const notes = loadNotes(workspaceId)
                 
                 finalTask = `CONTEXT:
@@ -1141,6 +1145,9 @@ ${notes ? `\nDATA MODEL NOTES:\n${notes}` : ""}
 
 ADMIN TASK:
 ${task}`
+                const beforeLen = task.length
+                const afterLen = finalTask.length
+                logger.info({ beforeLen, afterLen, tables: relevantTables }, "OpenClaw: context built with schema pruning")
             } catch (err) {
                 logger.warn({ err: err.message }, "OpenClaw: failed to build context, sending raw task")
             }

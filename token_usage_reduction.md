@@ -37,6 +37,16 @@ In `gateway/responder.js`, if the RAG search returns "no results found," the sys
 #### 8. Provider-Level Constraints
 The LLM providers (like `providers/mlx.js`) are configured with a default `max_tokens` (typically 1,000) to ensure the model doesn't generate unnecessarily long or repetitive outputs, protecting against "runaway" generation costs.
 
+#### 9. OpenClaw Context Pruning (Schema Selector)
+For complex administrative tasks sent to OpenClaw, the system uses a first-pass LLM call to identify only the relevant database tables for the given task.
+- **Benefit**: Instead of sending the entire database schema and sample data for all tables (which can be thousands of tokens), it only sends the subset necessary to solve the problem.
+- **Implementation**: `gateway/adminAgent.js` calls `selectRelevantTables` before building the OpenClaw prompt.
+
+#### 10. OpenClaw Workspace Optimization
+The OpenClaw workspace instructions (`AGENTS.md`) have been pruned to remove boilerplate and verbose guidelines.
+- **Benefit**: Reductions in the initial "identity" loading for every OpenClaw session (from ~7.7KB down to <1KB).
+- **Implementation**: Replaced verbose instructional sections in `~/.openclaw/workspace/AGENTS.md` with a concise summary checklist.
+
 ---
 
 ### Advanced Strategies (Recommendations)

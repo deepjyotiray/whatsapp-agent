@@ -88,12 +88,17 @@ function runShell(cmd) {
 
 // ── DB context builder ────────────────────────────────────────────────────────
 
-function genericDbContext(dbPath) {
+function genericDbContext(dbPath, relevantTables = null) {
     const db = new Database(dbPath, { readonly: true })
     try {
-        const tables = db.prepare(
+        const allTables = db.prepare(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).all().map(t => t.name)
+        
+        const tables = Array.isArray(relevantTables) 
+            ? allTables.filter(t => relevantTables.includes(t))
+            : allTables
+
         const lines = [`=== DATABASE SUMMARY ===`, `Date: ${new Date().toDateString()}`, `Tables: ${tables.join(", ")}`, ""]
         for (const t of tables) {
             const count = db.prepare(`SELECT COUNT(*) as c FROM "${t}"`).get().c
@@ -106,7 +111,7 @@ function genericDbContext(dbPath) {
     } finally { db.close() }
 }
 
-async function buildDbContext(workspaceId) {
+async function buildDbContext(workspaceId, relevantTables = null) {
     const profile = loadProfile(workspaceId)
     const dbPath = profile.dbPath || getAdminCfg().db_path
 
@@ -115,24 +120,29 @@ async function buildDbContext(workspaceId) {
         const pack = getPackForWorkspace(profile)
         if (pack?.buildAdminContext) {
             // Note: pack.buildAdminContext might be async now
-            return await pack.buildAdminContext(dbPath)
+            return await pack.buildAdminContext(dbPath, relevantTables)
         }
     } catch (err) {
         logger.warn({ err: err.message }, "admin: domain pack buildAdminContext failed, using generic")
     }
 
     // generic fallback — schema introspection
-    return genericDbContext(dbPath)
+    return genericDbContext(dbPath, relevantTables)
 }
 
 // ── LLM-driven dynamic SQL query ──────────────────────────────────────────────
 
-function getDbSchema(dbPath) {
+function getDbSchema(dbPath, relevantTables = null) {
     const db = new Database(dbPath, { readonly: true })
     try {
-        const tables = db.prepare(
+        const allTables = db.prepare(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         ).all().map(t => t.name)
+
+        const tables = Array.isArray(relevantTables)
+            ? allTables.filter(t => relevantTables.includes(t))
+            : allTables
+
         return tables.map(t => {
             const cols = db.prepare(`PRAGMA table_info("${t}")`).all()
             return `TABLE ${t} (${cols.map(c => c.name).join(", ")})`
@@ -227,6 +237,37 @@ Answer:`
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
+
+async function selectRelevantTables(task, workspaceId) {
+    const profile = loadProfile(workspaceId)
+    const dbPath = profile.dbPath || getAdminCfg().db_path
+    const allTables = new Database(dbPath, { readonly: true })
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        .all().map(t => t.name)
+    
+    if (allTables.length <= 3) return allTables // too few tables, just send all
+
+    const notes = loadNotes(workspaceId)
+    const prompt = `You are a database expert. Given a task and a list of tables, select ONLY the tables that are relevant to the task. 
+The task is: "${task}"
+
+Available tables:
+${allTables.join(", ")}
+
+${notes ? `\nData model notes:\n${notes}\n` : ""}
+
+Return ONLY a comma-separated list of table names, no other text.`
+
+    try {
+        const adminLlmCfg = getAdminCfg().agent_llm || {}
+        const res = await complete(prompt, { ...adminLlmCfg, max_tokens: 50 })
+        if (!res) return allTables
+        const selected = res.split(",").map(s => s.trim()).filter(s => allTables.includes(s))
+        return selected.length > 0 ? selected : allTables
+    } catch {
+        return allTables
+    }
+}
 
 async function handleAdmin(payload, options = {}) {
     const flow = options.flow || "admin" // default to admin flow
@@ -381,5 +422,6 @@ module.exports = {
     getShellPatterns, 
     getUsers, 
     buildDbContext, 
-    getDbSchema 
+    getDbSchema,
+    selectRelevantTables
 }
