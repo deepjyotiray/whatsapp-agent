@@ -36,3 +36,33 @@ In `gateway/responder.js`, if the RAG search returns "no results found," the sys
 
 #### 8. Provider-Level Constraints
 The LLM providers (like `providers/mlx.js`) are configured with a default `max_tokens` (typically 1,000) to ensure the model doesn't generate unnecessarily long or repetitive outputs, protecting against "runaway" generation costs.
+
+---
+
+### Advanced Strategies (Recommendations)
+
+To further reduce token usage, the following strategies could be implemented:
+
+#### 1. Dynamic History Summarization
+Instead of just a rolling window (last 10 turns), we can implement **History Summarization** in `runtime/sessionMemory.js`.
+- **Approach**: After 10 turns, instead of dropping older messages, we can call a lightweight "summarizer" LLM to condense those turns into a 1-2 sentence summary and append it to the context.
+- **Benefit**: Maintains long-term context while keeping the input prompt length fixed.
+
+#### 2. Intent-Specific Context Injection
+In `runtime/executor.js`, the `buildProfileFacts` function currently sends all business profile data to every tool call.
+- **Optimization**: Only inject facts that are relevant to the selected tool (e.g., don't send "opening hours" to a "check stock" tool).
+- **Benefit**: Reduces prompt noise and input tokens by 20–30% for small-to-medium businesses.
+
+#### 3. Token-Aware RAG Truncation
+Current RAG truncation in `gateway/responder.js` uses a static **4,000-character** limit.
+- **Optimization**: Use a token-counting library (like `tiktoken`) to truncate precisely at a target token count (e.g., 800 tokens).
+- **Benefit**: Prevents "over-truncating" dense text and "under-truncating" sparse text, leading to more consistent costs.
+
+#### 4. Negative Result Caching
+If a keyword search in `rag.js` or `tools/genericRagTool.js` returns "no results," we can cache that specific query as "empty" for a short TTL (e.g., 10 minutes).
+- **Benefit**: If a user repeats a query that previously failed, we skip both the database search and the subsequent LLM "fallback" call.
+
+#### 5. Planner Step Pruning
+The `runtime/plannerEngine.js` currently sends the **entire list of available intents and tools** to the LLM to build a plan.
+- **Optimization**: Use a first-pass keyword matcher to narrow down the "candidate tools" before asking the Planner to build the sequential plan.
+- **Benefit**: Significantly reduces the input prompt size for agents with 20+ tools.
