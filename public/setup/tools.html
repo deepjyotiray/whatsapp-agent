@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SecureAI — Agent Tools</title>
-  <link rel="stylesheet" href="/setup/assets/shared.css">
+  <link rel="stylesheet" href="/setup/shared.css">
   <style>
     .detail-row{display:flex;justify-content:space-between;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);font-size:0.84rem;cursor:pointer;gap:12px}
     .detail-row:hover{background:rgba(124,111,247,.04);margin:0 -10px;padding:10px}
@@ -24,7 +24,17 @@
   </style>
 </head><body>
   <main class="page">
-    <div class="page-header"><h2>Agent Tools</h2><p>Manage intents, tools, capabilities, prompt guides, data model notes, and workers.</p></div>
+    <div class="page-header"><h2>Agent Tools</h2><p>Manage intents, tools, capabilities, prompt guides, data model notes, and workers. <a href="/models" style="color:var(--accent); font-weight: 600;">Configure Models →</a></p></div>
+
+    <!-- Agent Manifest Editor -->
+    <div class="card">
+      <div class="card-head"><h3>Agent Manifest Editor</h3><button class="btn btn-ghost btn-sm" onclick="loadManifest()">Refresh</button></div>
+      <p id="manifest-path" style="font-size:0.7rem;color:var(--muted);margin-bottom:8px"></p>
+      <form id="manifest-form" style="display:grid;gap:8px">
+        <label class="field"><span>Manifest YAML (agents/*.yml)</span><textarea id="manifest-yaml" rows="15" style="font-family:monospace;font-size:0.75rem" placeholder="agent: ... intents: ... tools: ..."></textarea></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save Manifest & Clear Sessions</button>
+      </form>
+    </div>
 
     <!-- Intents -->
     <div class="card">
@@ -117,72 +127,6 @@
       <div class="status-box" id="notes-status" style="margin-top:8px"></div>
     </div>
 
-    <!-- LLM Models -->
-    <div class="card">
-      <div class="card-head"><h3>LLM Models</h3><button class="btn btn-ghost btn-sm" id="llm-refresh">Refresh</button></div>
-      <div style="margin-bottom:12px;padding:10px 12px;background:rgba(124,111,247,.06);border:1px solid var(--border);border-radius:var(--radius-sm)">
-        <div style="font-weight:600;font-size:0.82rem;margin-bottom:6px">Agent Backend</div>
-        <div style="display:flex;gap:12px;align-items:center">
-          <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;cursor:pointer"><input type="radio" name="agent-backend" value="local" id="llm-be-local"> Local (built-in)</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:0.82rem;cursor:pointer"><input type="radio" name="agent-backend" value="openclaw" id="llm-be-openclaw"> OpenClaw Gateway</label>
-        </div>
-        <div style="font-size:0.74rem;color:var(--muted);margin-top:4px">OpenClaw routes through your gateway (uses your ChatGPT/Codex subscription). Local uses the API key below.</div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;padding:4px 0">
-        <div>
-          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;color:var(--muted)">CUSTOMER FLOW</div>
-          <label class="field" style="margin-bottom:6px"><span>Preset</span>
-            <select id="llm-c-preset" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%">
-              <option value="">Custom</option>
-              <option value="openai">OpenAI</option>
-              <option value="groq">Groq (free)</option>
-              <option value="gemini">Google Gemini (free)</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="ollama">Ollama (local)</option>
-            </select>
-          </label>
-          <label class="field" style="margin-bottom:6px"><span>Provider</span><input id="llm-c-provider" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Model</span><input id="llm-c-model" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>API Key</span><input id="llm-c-key" type="password" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-        </div>
-        <div>
-          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;color:var(--muted)">ADMIN FLOW</div>
-          <label class="field" style="margin-bottom:6px"><span>Keyword</span><input id="llm-a-keyword" placeholder="e.g. ray" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Preset</span>
-            <select id="llm-a-preset" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%">
-              <option value="">Custom</option>
-              <option value="openai">OpenAI</option>
-              <option value="groq">Groq (free)</option>
-              <option value="gemini">Google Gemini (free)</option>
-              <option value="openrouter">OpenRouter</option>
-            </select>
-          </label>
-          <label class="field" style="margin-bottom:6px"><span>Model</span><input id="llm-a-model" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Base URL</span><input id="llm-a-url" placeholder="(default: OpenAI)" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>API Key</span><input id="llm-a-key" type="password" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Allowed Tools</span><input id="llm-a-tools" placeholder="query_db, shell" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-        </div>
-        <div>
-          <div style="font-weight:600;font-size:0.82rem;margin-bottom:8px;color:var(--muted)">AGENT FLOW</div>
-          <label class="field" style="margin-bottom:6px"><span>Keyword</span><input id="llm-ag-keyword" placeholder="e.g. agent" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Preset</span>
-            <select id="llm-ag-preset" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%">
-              <option value="">Custom</option>
-              <option value="openai">OpenAI</option>
-              <option value="groq">Groq (free)</option>
-              <option value="gemini">Google Gemini (free)</option>
-              <option value="openrouter">OpenRouter</option>
-            </select>
-          </label>
-          <label class="field" style="margin-bottom:6px"><span>Model</span><input id="llm-ag-model" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Base URL</span><input id="llm-ag-url" placeholder="(default: OpenAI)" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>API Key</span><input id="llm-ag-key" type="password" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-          <label class="field" style="margin-bottom:6px"><span>Allowed Tools</span><input id="llm-ag-tools" placeholder="run_shell, query_db, etc" style="font-size:0.82rem;padding:4px 6px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-sm);width:100%"></label>
-        </div>
-      </div>
-      <button class="btn btn-primary btn-sm" id="llm-save" style="margin-top:8px">Save</button>
-      <span id="llm-status" style="font-size:0.78rem;color:var(--green);margin-left:8px"></span>
-    </div>
 
     <!-- Admin Users -->
     <div class="card">
@@ -228,7 +172,7 @@
       <ul class="item-list" id="wk-list"><li class="empty-msg">Loading…</li></ul>
     </div>
   </main>
-  <script src="/setup/assets/shared.js"></script>
+  <script src="/setup/shared.js"></script>
   <script>
     buildShell("tools")
 
@@ -572,64 +516,24 @@
     })
     $("sh-new").addEventListener("keydown", function(e) { if (e.key === "Enter") { e.preventDefault(); $("sh-add").click() } })
 
-    // ── LLM Models ─────────────────────────────────────────────────────────
-    var LLM_PRESETS = {
-      openai:     { provider: "openai",  model: "gpt-4o-mini", url: "" },
-      groq:       { provider: "openai",  model: "llama-3.3-70b-versatile", url: "https://api.groq.com/openai/v1/chat/completions" },
-      gemini:     { provider: "openai",  model: "gemini-2.0-flash", url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" },
-      openrouter: { provider: "openai",  model: "google/gemini-2.0-flash-exp:free", url: "https://openrouter.ai/api/v1/chat/completions" },
-      ollama:     { provider: "ollama",  model: "llama3.2", url: "" },
-    }
-    async function loadLlm() {
+    // ── Data Management ────────────────────────────────────────────────
+    async function loadManifest() {
       try {
-        var d = await api("/setup/llm/config")
-        $("llm-c-provider").value = d.customer.provider || "openai"
-        $("llm-c-model").value = d.customer.model || ""
-        $("llm-c-key").value = d.customer.api_key || ""
-
-        $("llm-a-model").value = d.admin.model || ""
-        $("llm-a-url").value = d.admin.url || ""
-        $("llm-a-key").value = d.admin.api_key || ""
-        $("llm-a-keyword").value = d.admin.keyword || "ray"
-        $("llm-a-tools").value = Array.isArray(d.admin.tools) ? d.admin.tools.join(", ") : d.admin.tools || ""
-
-        $("llm-ag-model").value = d.agent.model || ""
-        $("llm-ag-url").value = d.agent.url || ""
-        $("llm-ag-key").value = d.agent.api_key || ""
-        $("llm-ag-keyword").value = d.agent.keyword || "agent"
-        $("llm-ag-tools").value = Array.isArray(d.agent.tools) ? d.agent.tools.join(", ") : d.agent.tools || ""
-
-        if (d.agent_backend === "openclaw") $("llm-be-openclaw").checked = true
-        else $("llm-be-local").checked = true
-      } catch {}
+        var d = await api("/agent/manifest")
+        $("manifest-path").textContent = d.path
+        $("manifest-yaml").value = d.content
+      } catch (e) { alert("Failed to load manifest: " + e.message) }
     }
-    function applyPreset(prefix, preset) {
-      var p = LLM_PRESETS[preset]
-      if (!p) return
-      if (prefix === "c") $("llm-c-provider").value = p.provider
-      $("llm-" + prefix + "-model").value = p.model
-      if ($("llm-" + prefix + "-url")) $("llm-" + prefix + "-url").value = p.url
-    }
-    $("llm-c-preset").addEventListener("change", function() { applyPreset("c", this.value) })
-    $("llm-a-preset").addEventListener("change", function() { applyPreset("a", this.value) })
-    $("llm-ag-preset").addEventListener("change", function() { applyPreset("ag", this.value) })
-    $("llm-save").addEventListener("click", async function() {
+    $("manifest-form").addEventListener("submit", async function(e) {
+      e.preventDefault()
       try {
-        var backend = $("llm-be-openclaw").checked ? "openclaw" : "local"
-        await api("/setup/llm/config", "PUT", {
-          customer: { provider: $("llm-c-provider").value, model: $("llm-c-model").value, api_key: $("llm-c-key").value },
-          admin:    { model: $("llm-a-model").value, url: $("llm-a-url").value, api_key: $("llm-a-key").value, keyword: $("llm-a-keyword").value, tools: $("llm-a-tools").value },
-          agent:    { model: $("llm-ag-model").value, url: $("llm-ag-url").value, api_key: $("llm-ag-key").value, keyword: $("llm-ag-keyword").value, tools: $("llm-ag-tools").value },
-          agent_backend: backend,
-        })
-        $("llm-status").textContent = "✓ Saved"
-        $("llm-status").style.color = "var(--green)"
-        setTimeout(function() { $("llm-status").textContent = "" }, 2000)
-      } catch (err) { $("llm-status").textContent = "✗ " + err.message; $("llm-status").style.color = "var(--red)" }
+        await api("/agent/manifest", "POST", { content: $("manifest-yaml").value })
+        alert("Manifest saved and sessions cleared.")
+      } catch (err) { alert(err.message) }
     })
-    $("llm-refresh").addEventListener("click", loadLlm)
+    loadManifest()
 
-    window.onWorkspaceChange = function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadShell(); loadUsers(); loadLlm() }
-    initWorkspace().then(function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadWorkers(); loadShell(); loadUsers(); loadLlm() })
+    window.onWorkspaceChange = function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadShell(); loadUsers(); loadManifest() }
+    initWorkspace().then(function() { loadIntents(); loadTools(); loadCaps(); loadGuides(); loadNotes(); loadWorkers(); loadShell(); loadUsers(); loadManifest() })
   </script>
 </body></html>

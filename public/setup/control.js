@@ -52,21 +52,30 @@ async function doPreview() {
         const autoResult = data.preview.autoExecuted ? data.preview.executionResult : null
         _history.unshift({ message, preview: data.preview, result: autoResult })
         renderHistory()
-        renderPreview(data.preview)
-        if (data.preview.autoExecuted && data.preview.executionResult) {
-            renderResult(data.preview.executionResult)
-        }
-    } catch (err) {
-        alert("Preview failed: " + err.message)
-    } finally {
-        btn.disabled = false; btn.textContent = "Preview"
+    renderPreview(data.preview)
+    if (data.preview.autoExecuted && data.preview.executionResult) {
+      renderResult(data.preview.executionResult)
     }
+  } catch (err) {
+    alert("Preview failed: " + err.message)
+  } finally {
+    btn.disabled = false; btn.textContent = "Preview"
+  }
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadFlowConfigs();
+});
 
 document.getElementById("btn-preview").addEventListener("click", doPreview)
 document.getElementById("msg-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") doPreview()
+  if (e.key === "Enter") doPreview()
 })
+
+function $(id) { return document.getElementById(id) }
+
+// Initial load
+// loadFlowConfigs(); - moved to models.js
 
 // ── Render Preview ───────────────────────────────────────────────────────────
 

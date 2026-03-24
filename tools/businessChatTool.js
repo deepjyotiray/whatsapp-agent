@@ -23,6 +23,28 @@ async function loadCatalogHints(message, toolConfig) {
 }
 
 function deterministicFallback(message, profile) {
+    const text = String(message || "").toLowerCase()
+    if (/\b(joke|funny|make me laugh)\b/.test(text)) {
+        return `Why did the salad break up with the fries? It wanted a lighter relationship. ${profile.signature_line || ""}`.trim()
+    }
+    if (/\b(hello|hi|hey|namaste)\b/.test(text)) {
+        return `${profile.greeting || "Welcome"} ${profile.signature_line || ""}`.trim()
+    }
+    if (/\b(hours?|open|opening|closing|timings?)\b/.test(text) && profile.business_hours) {
+        return `Our hours are ${profile.business_hours}.`
+    }
+    if (/\b(email|e-mail|mail)\b/.test(text) && profile.contact_email) {
+        return `You can reach us at ${profile.contact_email}.`
+    }
+    if (/\b(phone|call|contact number|mobile)\b/.test(text) && profile.contact_phone) {
+        return `You can call us on ${profile.contact_phone}.`
+    }
+    if (/\b(website|site|order online)\b/.test(text) && profile.website) {
+        return `You can find us at ${profile.website}.`
+    }
+    if (/\b(address|location|where are you)\b/.test(text) && profile.address) {
+        return `We’re located at ${profile.address}.`
+    }
     return `${profile.greeting || "We'd love to help."} ${profile.signature_line || "Let me know how I can assist you."}`
 }
 
@@ -38,6 +60,11 @@ async function execute(_params, context, toolConfig) {
         tone: toolConfig.tone || wp.brandVoice || "warm, concise, and business-aware",
         signature_line: toolConfig.signature_line || "",
         greeting: toolConfig.greeting || "Welcome",
+        business_hours: wp.businessHours || "",
+        contact_email: wp.contactEmail || "",
+        contact_phone: wp.contactPhone || "",
+        website: wp.website || "",
+        address: wp.address || "",
     }
 
     const catalogHints = await loadCatalogHints(message, toolConfig)
@@ -78,7 +105,12 @@ ${message}
 `
 
     try {
-        const text = await complete(prompt)
+        if (typeof context.prepareLLMRequest === 'function') {
+            const text = await context.prepareLLMRequest(prompt)
+            return text || deterministicFallback(message, profile)
+        }
+        const { complete } = require("../providers/llm")
+        const text = await complete(prompt, context.llmConfig)
         return text || deterministicFallback(message, profile)
     } catch {
         return deterministicFallback(message, profile)

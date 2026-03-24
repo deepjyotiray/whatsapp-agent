@@ -31,9 +31,15 @@ function clear(phone) {
     delete carts[phone]
 }
 
+function clearAll() {
+    for (const key of Object.keys(carts)) {
+        delete carts[key]
+    }
+}
+
 // Generic session state store — domain packs define their own state machines
 function init(phone) {
     set(phone, { state: "active", data: {}, user: null })
 }
 
-module.exports = { get, set, update, clear, init }
+module.exports = { get, set, update, clear, clearAll, init }

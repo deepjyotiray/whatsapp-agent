@@ -8,6 +8,7 @@ const { sanitize }                       = require("../gateway/sanitizer")
 const { routeCustomerMessage }           = require("../gateway/customerRouter")
 const { isAdmin, parseAdminMessage, handleAdmin } = require("../gateway/admin")
 const { getGovernanceSnapshot }          = require("../gateway/adminGovernance")
+const { dispatchAgentTask }               = require("../gateway/adminAgent")
 const cartStore                          = require("../tools/cartStore")
 const executor                           = require("./executor")
 const logger                             = require("../gateway/logger")
@@ -30,14 +31,23 @@ class AgentChain {
     async execute(message, phone) {
         if (!this._ready) throw new Error("AgentChain: call loadAgent() first.")
 
+        // Backward compatibility: manifest-defined backend
+        if (this._manifest.agent?.backend === "openclaw") {
+            const response = await dispatchAgentTask(message, { phone })
+            debugInterceptor.logMessage(phone, message, response, "openclaw", "whatsapp", null)
+            return response
+        }
+
         // 0. Admin intercept
-        if (isAdmin(phone)) {
-            const admin = parseAdminMessage(message, phone)
-            if (admin.isAdmin) {
-                const response = await handleAdmin(admin.payload, { user: admin.user, flow: admin.flow })
-                debugInterceptor.logMessage(phone, message, response, "admin", "whatsapp", null)
-                return response
-            }
+        const admin = parseAdminMessage(message, phone)
+        if (admin.isAdmin) {
+            const response = await handleAdmin(admin.payload, { user: admin.user, flow: admin.flow })
+            debugInterceptor.logMessage(phone, message, response, "admin", "whatsapp", null)
+            return response
+        }
+        if (admin.matchedFlow && admin.message) {
+            debugInterceptor.logMessage(phone, message, admin.message, "admin_auth", "whatsapp", null)
+            return admin.message
         }
 
         // 1. Sanitizer

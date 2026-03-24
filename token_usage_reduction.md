@@ -45,7 +45,22 @@ For complex administrative tasks sent to OpenClaw, the system uses a first-pass 
 #### 10. OpenClaw Workspace Optimization
 The OpenClaw workspace instructions (`AGENTS.md` and `SOUL.md`) have been pruned to remove boilerplate and verbose guidelines.
 - **Benefit**: Reductions in the initial "identity" loading for every OpenClaw session. `AGENTS.md` was reduced from ~7.7KB to <1KB, and `SOUL.md` was reduced by ~50%.
-- **Implementation**: Replaced verbose sections in `~/.openclaw/workspace/` files with concise, bulleted summaries.
+- **Implementation**: Replaced verbose sections in the specialized workspace files (`~/.openclaw/admin_workspace/` and `~/.openclaw/agent_workspace/`) with concise, bulleted summaries.
+
+#### 11. Tool Metadata Injection, Filtering & Multi-Agent Isolation
+When calling the OpenClaw CLI, the system uses separate isolated agents ('admin' and 'agent') and injects a structured description of only the *allowed* tools (`query_db`, `run_shell`, etc.) directly into the agent's specific workspace. The legacy 'main' agent has been removed to ensure specialized contexts and prevent tool leakage.
+- **Benefit**: Ensures that the agent is aware of its specific capabilities, prevents it from trying to use disallowed tools, and isolates the history/context between standard admin commands and autonomous agent flows.
+- **Implementation**: `gateway/adminAgent.js` filters `CORE_TOOL_DEFINITIONS` based on the flow type (`admin.tools` vs `admin.agent_tools`), updates the appropriate workspace's `TOOLS.md` (`~/.openclaw/admin_workspace/` or `~/.openclaw/agent_workspace/`), and runs OpenClaw with the corresponding `--agent` flag. Legacy workspaces and agent configurations for 'main' were deleted.
+
+#### 12. Native Skill Mapping for Agentic Backends
+Custom "Skills" are registered within the OpenClaw backend to bridge it with the system's local database and shell.
+- **Benefit**: This provides a direct, low-latency execution path for administrative tasks without relying on external APIs or complex wrappers.
+- **Implementation**: Skills like `query_db` and `run_shell` are registered in OpenClaw's skill directory and point to local shell scripts (`query.sh`, `shell.sh`) that execute database queries and allowlisted commands.
+
+#### 13. Data Model Notes Injection
+The system injects a `data-model-notes.md` file into the agent's context during the prompt construction.
+- **Benefit**: To improve SQL accuracy and reduce counting errors. This file provides critical business logic (e.g., "one customer can have multiple subscriptions") and schema nuances that prevent miscounts and logical errors during data retrieval.
+- **Implementation**: `gateway/adminAgent.js` reads `data/workspaces/{workspaceId}/config/data-model-notes.md` and injects it into the OpenClaw task prompt.
 
 ---
 
@@ -76,3 +91,11 @@ If a keyword search in `rag.js` or `tools/genericRagTool.js` returns "no results
 The `runtime/plannerEngine.js` currently sends the **entire list of available intents and tools** to the LLM to build a plan.
 - **Optimization**: Use a first-pass keyword matcher to narrow down the "candidate tools" before asking the Planner to build the sequential plan.
 - **Benefit**: Significantly reduces the input prompt size for agents with 20+ tools.
+### Strategy #12: Native Skill Mapping, Identity Alignment & Reinforced Prompting
+To ensure administrative agents (like OpenClaw) use tools reliably:
+- **Native Skill Bridge**: Map internal tools (`query_db`, `run_shell`) to OpenClaw's native "Skills" directory. This makes them appear as "first-class" capabilities to the agent.
+- **Identity & Authorization**: Update workspace files (`IDENTITY.md`, `AGENTS.md`, `USER.md`) to establish the agent's identity as an "Authorized Admin" and document explicit user authorization. This prevents the model's safety/refusal heuristics from blocking tool usage.
+- **Dynamic Skill Sync**: The agent's workspace `TOOLS.md` is updated in real-time with available tools before each task.
+- **Reinforced Prompting**: Task prompts include explicit "AVAILABLE TOOLS" blocks and "SYSTEM INSTRUCTIONS" that command immediate tool usage and provide concrete invocation examples, including fallback syntaxes like `skill_call(skill="...", args={...})`.
+- **Anticipatory Error Handling**: Instructions explicitly forbid "lack of access" or "permission required" responses if tools are present in the allowlist.
+- **Clean Slate Synchronization**: When a tool is added or removed from the allowlist in the management console, the system automatically clears all existing OpenClaw sessions for the specialized agents (`admin` and `agent`). This prevents "context poisoning" where the agent's memory contains past failures or outdated tool definitions, ensuring a fresh, accurate state for every configuration change.

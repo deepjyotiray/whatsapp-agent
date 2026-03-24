@@ -59,9 +59,7 @@ tools:
       Stay hungry, stay healthy! 🍛🌶️🥗🥘🍤🍚🍩
 
       Healthy Meal Spot Concierge
-      kitchen@healthymealspot.com
-      +91 95946 14752
-      https://healthymealspot.com
+      To place orders visit healthymealspot.com or continue to chat on this number.
     db_path: "./data/orders.db"
 
   rag_menu:

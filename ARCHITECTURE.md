@@ -198,11 +198,31 @@ The admin pipeline handles two modes: **query** (read-only SQL) and **agent** (f
 | WhatsApp: `ray <pin> <command>` | Phone number match + keyword + per-user PIN | `handleAdmin(payload, { user })` |
 | CLI: `ray <pin> <command>` | Keyword + PIN | `handleAdmin(payload, { user })` |
 
-### Multi-User Admin
+### Flow-Gated Admin / Agent Auth
 
 **File:** `gateway/admin.js` → `getUsers()`, `isAdmin()`, `parseAdminMessage()`
 
-Multiple users can be registered as admins in `config/settings.json` under `admin.users`. Each user has:
+The live auth model is now **flow-specific**:
+
+- `flows.admin.auth.keyword`
+- `flows.admin.auth.pin`
+- `flows.admin.auth.allowed_numbers`
+- `flows.agent.auth.keyword`
+- `flows.agent.auth.pin`
+- `flows.agent.auth.allowed_numbers`
+
+Example:
+
+- `ray 123456 show today's orders` → admin flow
+- `agent 122333 Open safari` → agent flow
+
+Wrong combinations are handled differently:
+
+- wrong hotword → falls through to customer flow
+- correct hotword + wrong PIN → explicit wrong-PIN response for that flow
+- correct hotword + disallowed number → explicit unauthorized-number response for that flow
+
+Registered users in `config/settings.json` under `admin.users` still provide the role/mode metadata used after auth. Each user has:
 
 | Field | Description |
 |---|---|
@@ -210,11 +230,11 @@ Multiple users can be registered as admins in `config/settings.json` under `admi
 | `name` | Display name for logging |
 | `role` | Governance role (`super_admin`, `operator`, `observer`, `system_admin`) |
 | `mode` | Access mode (`full`, `agent_only`, `query_only`, `shell_only`) |
-| `pin` | Per-user PIN (empty = no PIN required) |
+| `pin` | Legacy per-user PIN field; current flow auth prefers `flows.<flow>.auth.pin` |
 
-`isAdmin(phone)` checks all registered users and returns the matched user object (or `null`). `parseAdminMessage(message, phone)` uses the matched user's PIN for validation. The user object is passed through to `handleAdmin()` which enforces mode restrictions before routing.
+`parseAdminMessage(message, phone)` now matches the flow keyword first, validates the phone against that flow's `allowed_numbers`, validates the PIN for that flow, and then passes the matched user object through to `handleAdmin()` which enforces mode restrictions before routing.
 
-Backward compatible: if `admin.users` is empty, falls back to `admin.number` + `admin.pin`.
+Backward compatible: if flow-specific auth is missing, the system falls back to the legacy `admin.keyword`, `admin.agent_keyword`, `admin.pin`, `admin.users`, and `admin.number`.
 
 ### Configurable Shell Patterns
 

@@ -27,6 +27,9 @@ const { getActiveWorkspace, listWorkspaceIds } = require("../core/workspace")
 const { buildPreview, buildWorkflowPreview, approveAndExecute, reject: rejectPreview, listPending, getPending, getEntry, setExecutionPolicy, getExecutionPolicy, setAutoMode, isAutoMode } = require("../runtime/previewEngine")
 const workflowStore = require("../runtime/workflowStore")
 const debugInterceptor = require("../runtime/debugInterceptor")
+const { clearOpenClawSessions } = require("../gateway/adminAgent")
+const cartStore = require("../tools/cartStore")
+const yaml = require("js-yaml")
 
 const PORT   = settings.transports?.http?.port || 3010
 const SECRET = settings.api.secret
@@ -60,7 +63,28 @@ function contentType(filePath) {
 }
 
 function assetVersion() {
-    try { return String(fs.statSync(path.join(PUBLIC_DIR, "setup", "app.js")).mtimeMs | 0) } catch { return "0" }
+    try {
+        const root = path.join(PUBLIC_DIR, "setup")
+        let maxMtime = 0
+        const stack = [root]
+        while (stack.length) {
+            const dir = stack.pop()
+            const entries = fs.readdirSync(dir, { withFileTypes: true })
+            for (const entry of entries) {
+                if (entry.name.startsWith(".")) continue
+                const full = path.join(dir, entry.name)
+                if (entry.isDirectory()) {
+                    stack.push(full)
+                    continue
+                }
+                const mtime = fs.statSync(full).mtimeMs | 0
+                if (mtime > maxMtime) maxMtime = mtime
+            }
+        }
+        return String(maxMtime || 0)
+    } catch {
+        return "0"
+    }
 }
 const ASSET_V = assetVersion()
 
@@ -161,14 +185,20 @@ const server = http.createServer(async (req, res) => {
         "/admin": "admin.html",
         "/tools": "tools.html",
         "/intercept": "intercept-v2.html",
-        "/control": "control-v2.html",
+        "/control": "control.html",
+        "/models": "models.html",
         "/setup": "dashboard.html",
         "/setup/intercept": "intercept-v2.html",
-        "/setup/control": "control-v2.html",
+        "/setup/control": "control.html",
     }
 
-    const isSetupPath = pathname.startsWith("/setup") || setupHost || PAGE_MAP[pathname] || pathname === "/login"
-    const loginAsset = req.method === "GET" && (pathname === "/login" || pathname.startsWith("/setup/assets/"))
+    const isSetupPath = pathname.startsWith("/setup") || setupHost || PAGE_MAP[pathname] || pathname === "/login" || pathname.startsWith("/agent/") || pathname.startsWith("/governance")
+    const loginAsset = req.method === "GET" && (
+        pathname === "/login" ||
+        pathname === "/setup/styles.css" ||
+        pathname === "/setup/login.js" ||
+        pathname.startsWith("/setup/assets/")
+    )
 
     if (isSetupPath) {
         if (!loginAsset && !(req.method === "POST" && pathname === "/setup/login") && !isSetupAuthorized(req)) {
@@ -189,6 +219,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && PAGE_MAP[pathname]) {
         serveFile(res, path.join(PUBLIC_DIR, "setup", PAGE_MAP[pathname]))
         return
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/setup/") && !pathname.startsWith("/setup/assets/")) {
+        const rel = pathname.replace("/setup/", "")
+        const safe = path.normalize(rel).replace(/^(\.\.[/\\])+/, "")
+        const filePath = path.join(PUBLIC_DIR, "setup", safe)
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            serveFile(res, filePath)
+            return
+        }
     }
 
     if (req.method === "GET" && pathname.startsWith("/setup/assets/")) {
@@ -600,6 +640,13 @@ const server = http.createServer(async (req, res) => {
             }
             fs.writeFileSync(path.resolve(__dirname, "../config/settings.json"), JSON.stringify(cfg, null, 2))
             delete require.cache[require.resolve("../config/settings.json")]
+
+            // Clear OpenClaw sessions if backend is OpenClaw and tools changed
+            if (cfg.admin?.agent_backend === "openclaw") {
+                const { clearOpenClawSessions } = require("../gateway/adminAgent")
+                clearOpenClawSessions().catch(err => console.error("Failed to clear OpenClaw sessions:", err))
+            }
+
             sendJson(res, 200, { ok: true })
         } catch (err) {
             sendJson(res, 500, { error: err.message })
@@ -663,16 +710,281 @@ const server = http.createServer(async (req, res) => {
 
     // GET /agent/intents
     if (req.method === "GET" && pathname === "/agent/intents") {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             sendJson(res, 200, { intents: agentChain.getIntents() })
         } catch (err) { sendJson(res, 500, { error: err.message }) }
         return
     }
 
+    // GET /setup/llm/config
+    if (req.method === "GET" && pathname === "/setup/llm/config") {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const settingsPath = path.resolve(__dirname, "../config/settings.json")
+            const cfg = JSON.parse(fs.readFileSync(settingsPath, "utf8"))
+            sendJson(res, 200, {
+                customer: cfg.customer?.llm || {},
+                admin: cfg.admin?.llm || {},
+                agent: cfg.agent?.llm || {},
+                agent_backend: cfg.agent?.backend || "local"
+            })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
+    // PUT /setup/llm/config
+    if (req.method === "PUT" && pathname === "/setup/llm/config") {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const body = await readBody(req)
+            const settingsPath = path.resolve(__dirname, "../config/settings.json")
+            const cfg = JSON.parse(fs.readFileSync(settingsPath, "utf8"))
+
+            if (body.customer) cfg.customer = { ...cfg.customer, llm: body.customer }
+            if (body.admin)    cfg.admin    = { ...cfg.admin,    llm: body.admin }
+            if (body.agent)    cfg.agent    = { ...cfg.agent,    llm: body.agent }
+            if (body.agent_backend) {
+                if (!cfg.agent) cfg.agent = {}
+                cfg.agent.backend = body.agent_backend
+            }
+
+            fs.writeFileSync(settingsPath, JSON.stringify(cfg, null, 2), "utf8")
+            
+            // clear sessions as required by issue description
+            cartStore.clearAll()
+            await clearOpenClawSessions().catch(() => {})
+
+            sendJson(res, 200, { ok: true })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
+    // GET /agent/manifest
+    if (req.method === "GET" && pathname === "/agent/manifest") {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const manifestPath = agentChain.getManifestPath()
+            const content = fs.readFileSync(manifestPath, "utf8")
+            sendJson(res, 200, { path: manifestPath, content })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
+    // POST /agent/manifest
+    if (req.method === "POST" && pathname === "/agent/manifest") {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const { content } = await readBody(req)
+            if (!content) { sendJson(res, 400, { error: "content required" }); return }
+            
+            const manifestPath = agentChain.getManifestPath()
+            // validate yaml
+            yaml.load(content)
+            fs.writeFileSync(manifestPath, content, "utf8")
+            agentChain.reloadAgent()
+            
+            // clear sessions as required by issue description
+            cartStore.clearAll()
+            await clearOpenClawSessions().catch(() => {})
+
+            sendJson(res, 200, { ok: true })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
+    // GET /agent-config - Unified LLM/Backend management (new endpoint as requested)
+    if (req.method === "GET" && pathname === "/agent-config") {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const settingsPath = path.resolve(__dirname, "../config/settings.json")
+            const cfg = JSON.parse(fs.readFileSync(settingsPath, "utf8"))
+            
+            let availableTools = []
+            try {
+                availableTools = (agentChain.getTools() || []).map(t => t.name).filter(Boolean)
+            } catch {
+                availableTools = []
+            }
+            
+            // Build the default configuration from existing top-level settings if flows doesn't exist
+            const defaultFlows = {
+                customer: { 
+                    llm: cfg.customer?.llm || {}, 
+                    backend: cfg.customer?.backend || "direct",
+                    auth: cfg.flows?.customer?.auth || {}
+                },
+                admin: { 
+                    llm: cfg.admin?.llm || {}, 
+                    backend: cfg.flows?.admin?.backend || cfg.admin?.backend || "direct", 
+                    tools: cfg.admin?.tools || [],
+                    auth: {
+                        keyword: cfg.admin?.keyword || "admin",
+                        pin: cfg.admin?.pin || "",
+                        allowed_numbers: (cfg.flows?.admin?.auth?.allowed_numbers || (cfg.admin?.users || []).map(u => u.phone).filter(Boolean) || (cfg.admin?.number ? [cfg.admin.number] : [])),
+                    }
+                },
+                agent: { 
+                    llm: cfg.agent?.llm || cfg.admin?.agent_llm || {}, 
+                    backend: cfg.admin?.agent_backend || "openclaw", 
+                    tools: cfg.admin?.agent_tools || [],
+                    auth: {
+                        keyword: cfg.admin?.agent_keyword || "agent",
+                        pin: cfg.flows?.agent?.auth?.pin || cfg.admin?.pin || "",
+                        allowed_numbers: (cfg.flows?.agent?.auth?.allowed_numbers || (cfg.admin?.users || []).map(u => u.phone).filter(Boolean) || (cfg.admin?.number ? [cfg.admin.number] : [])),
+                    }
+                }
+            }
+
+            const configuredFlows = cfg.flows || {}
+            const mergeFlow = (base, override) => {
+                const merged = { ...(base || {}) }
+                if (override && typeof override === "object") {
+                    for (const [k, v] of Object.entries(override)) {
+                        if (k === "llm") continue
+                        merged[k] = v
+                    }
+                }
+                if (base?.llm || override?.llm) {
+                    merged.llm = { ...(base?.llm || {}), ...(override?.llm || {}) }
+                }
+                if (override && Object.prototype.hasOwnProperty.call(override, "tools")) {
+                    merged.tools = override.tools
+                } else if (base && Object.prototype.hasOwnProperty.call(base, "tools")) {
+                    merged.tools = base.tools
+                }
+                return merged
+            }
+
+            const resultFlows = {
+                customer: mergeFlow(defaultFlows.customer, configuredFlows.customer),
+                admin: mergeFlow(defaultFlows.admin, configuredFlows.admin),
+                agent: mergeFlow(defaultFlows.agent, configuredFlows.agent),
+            }
+
+            sendJson(res, 200, { 
+                flows: resultFlows,
+                availableTools
+            })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
+    // POST /agent-config - Unified LLM/Backend management
+    if (req.method === "POST" && pathname === "/agent-config") {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const body = await readBody(req)
+            const settingsPath = path.resolve(__dirname, "../config/settings.json")
+            const current = JSON.parse(fs.readFileSync(settingsPath, "utf8"))
+            
+            if (body.flows) {
+                if (!current.flows) current.flows = {}
+                for (const [flowName, flowCfg] of Object.entries(body.flows)) {
+                    const existing = current.flows[flowName] || {}
+                    const merged = { ...existing, ...flowCfg }
+                    if (existing.llm || flowCfg.llm) {
+                        merged.llm = { ...(existing.llm || {}), ...(flowCfg.llm || {}) }
+                    }
+                    if (flowCfg && Object.prototype.hasOwnProperty.call(flowCfg, "tools")) {
+                        merged.tools = flowCfg.tools
+                    } else if (existing && Object.prototype.hasOwnProperty.call(existing, "tools")) {
+                        merged.tools = existing.tools
+                    }
+                    current.flows[flowName] = merged
+                    if (flowName === "customer") {
+                        if (!current.customer) current.customer = {}
+                        if (merged.llm) current.customer.llm = { ...current.customer.llm, ...merged.llm }
+                        if (merged.backend !== undefined) current.customer.backend = merged.backend
+                    }
+                    if (flowName === "admin") {
+                        if (!current.admin) current.admin = {}
+                        if (merged.llm) current.admin.llm = { ...current.admin.llm, ...merged.llm }
+                        if (merged.backend !== undefined) current.admin.backend = merged.backend
+                        if (merged.tools !== undefined) current.admin.tools = merged.tools
+                        if (merged.auth) {
+                            current.admin.keyword = merged.auth.keyword !== undefined ? merged.auth.keyword : current.admin.keyword
+                            current.admin.pin = merged.auth.pin !== undefined ? merged.auth.pin : current.admin.pin
+                        }
+                    }
+                    if (flowName === "agent") {
+                        if (!current.agent) current.agent = {}
+                        if (merged.llm) current.agent.llm = { ...current.agent.llm, ...merged.llm }
+                        if (merged.backend !== undefined) {
+                            current.agent.backend = merged.backend
+                            if (!current.admin) current.admin = {}
+                            current.admin.agent_backend = merged.backend
+                        }
+                        if (merged.tools !== undefined) {
+                            if (!current.admin) current.admin = {}
+                            current.admin.agent_tools = merged.tools
+                        }
+                        if (merged.endpoint !== undefined) current.agent.endpoint = merged.endpoint
+                        if (merged.auth) {
+                            if (!current.admin) current.admin = {}
+                            current.admin.agent_keyword = merged.auth.keyword !== undefined ? merged.auth.keyword : current.admin.agent_keyword
+                        }
+                    }
+                }
+            }
+            
+            fs.writeFileSync(settingsPath, JSON.stringify(current, null, 2), "utf8")
+            delete require.cache[require.resolve("../config/settings.json")]
+            agentChain.reloadAgent()
+            cartStore.clearAll()
+            await clearOpenClawSessions().catch(() => {})
+
+            sendJson(res, 200, { ok: true })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
+    // GET /agent/config - Unified LLM/Backend management (Redirect to /agent-config)
+    if (req.method === "GET" && pathname === "/agent/config") {
+        res.writeHead(301, { "Location": "/agent-config" });
+        res.end();
+        return;
+    }
+
+    // POST /agent/config - Unified LLM/Backend management (Redirect to /agent-config)
+    if (req.method === "POST" && pathname === "/agent/config") {
+        res.writeHead(301, { "Location": "/agent-config" });
+        res.end();
+        return;
+    }
+
+    // GET /agent/models/:provider - List models for a provider
+    if (req.method === "GET" && pathname.startsWith("/agent/models/")) {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        try {
+            const provider = pathname.replace("/agent/models/", "")
+            const { listModels, getFlowConfig } = require("../providers/llm")
+            
+            // Use config from query or current settings for the provider
+            const query = new URL(req.url, `http://${req.headers.host}`).searchParams
+            const config = {
+                api_key: query.get("api_key"),
+                base_url: query.get("base_url")
+            }
+            
+            // Fallback to existing config if not provided in query
+            if (!config.api_key || !config.base_url) {
+                const existing = getFlowConfig("customer") // any flow will do to get provider defaults
+                if (existing.provider === provider) {
+                    config.api_key = config.api_key || existing.api_key
+                    config.base_url = config.base_url || existing.base_url || existing.url
+                }
+            }
+
+            const models = await listModels(provider, config)
+            sendJson(res, 200, { models })
+        } catch (err) { sendJson(res, 500, { error: err.message }) }
+        return
+    }
+
     // GET /agent/intents/:name
     if (req.method === "GET" && pathname.startsWith("/agent/intents/")) {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             const name = pathname.replace("/agent/intents/", "")
             sendJson(res, 200, agentChain.getIntent(name))
@@ -682,7 +994,7 @@ const server = http.createServer(async (req, res) => {
 
     // GET /agent/tools
     if (req.method === "GET" && pathname === "/agent/tools") {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             sendJson(res, 200, { tools: agentChain.getTools() })
         } catch (err) { sendJson(res, 500, { error: err.message }) }
@@ -691,7 +1003,7 @@ const server = http.createServer(async (req, res) => {
 
     // GET /agent/tools/:name
     if (req.method === "GET" && pathname.startsWith("/agent/tools/")) {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             const name = pathname.replace("/agent/tools/", "")
             sendJson(res, 200, agentChain.getTool(name))
@@ -701,7 +1013,7 @@ const server = http.createServer(async (req, res) => {
 
     // POST /agent/intents  { name, tool, auth_required, hint }
     if (req.method === "POST" && pathname === "/agent/intents") {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             const { name, tool, auth_required = false, hint } = await readBody(req)
             if (!name || !tool) { sendJson(res, 400, { error: "name and tool required" }); return }
@@ -717,7 +1029,7 @@ const server = http.createServer(async (req, res) => {
 
     // DELETE /agent/intents/:name
     if (req.method === "DELETE" && pathname.startsWith("/agent/intents/")) {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             const name = pathname.replace("/agent/intents/", "")
             const intents = agentChain.deleteIntent(name)
@@ -730,7 +1042,7 @@ const server = http.createServer(async (req, res) => {
 
     // POST /agent/tools  { name, type, ...config }
     if (req.method === "POST" && pathname === "/agent/tools") {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             const { name, ...config } = await readBody(req)
             if (!name || !config.type) { sendJson(res, 400, { error: "name and type required" }); return }
@@ -745,7 +1057,7 @@ const server = http.createServer(async (req, res) => {
 
     // DELETE /agent/tools/:name
     if (req.method === "DELETE" && pathname.startsWith("/agent/tools/")) {
-        if (req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) { sendJson(res, 401, { error: "unauthorized" }); return }
         try {
             const name = pathname.replace("/agent/tools/", "")
             const tools = agentChain.deleteTool(name)
@@ -769,7 +1081,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && pathname === "/governance") {
-        if (req.headers["x-secret"] !== SECRET) {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) {
             sendJson(res, 401, { error: "unauthorized" })
             return
         }
@@ -778,7 +1090,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && pathname === "/governance/approvals") {
-        if (req.headers["x-secret"] !== SECRET) {
+        if (!isSetupAuthorized(req) && req.headers["x-secret"] !== SECRET) {
             sendJson(res, 401, { error: "unauthorized" })
             return
         }

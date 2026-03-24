@@ -99,20 +99,65 @@ Multi-layered input validation — 72 regex patterns across 5 categories (prompt
 **Step 2 — Domain Gate**
 If the message is more than 3 words, it must contain food-related keywords. Someone asking about cricket scores gets dropped here without ever touching the LLM.
 
-**Step 3 — Intent Parser**
-The LLM reads the message and classifies it into one intent from your `restaurant.yml` manifest — things like `show_menu`, `order_status`, `greet`. The LLM's only job here is to pick a label. It never touches your database or calls any tools.
+**Step 3 — Intent Router**
+The system tries a fast heuristic router first. Obvious messages like `hi`, `my open orders`, or `i need help` are routed without using a model.
+
+If the heuristic router is not confident, the intent parser LLM reads the message and classifies it into one intent from your `restaurant.yml` manifest — things like `show_menu`, `order_status`, `greet`, `support`.
 
 **Step 4 — Policy Engine**
 Checks if that intent is allowed or restricted.
 
 **Step 5 — Tool Executor**
-Looks up what tool is mapped to that intent in the manifest and runs it deterministically. No LLM involved from this point.
+Looks up what tool is mapped to that intent in the manifest and runs that tool. This is the important part:
 
-The two tools that handle most customer interactions:
-- **RAG tool** — searches your menu using a vector database and answers questions like "do you have anything without onion"
-- **SQLite tool** — looks up order status, generates UPI QR codes, resends invoices
+- Some tools are **fully deterministic** and read directly from the database or session state
+- Some tools are **RAG / retrieval tools** that answer using menu or policy data
+- Some tools are **LLM-backed** and use the configured customer backend (for example OpenClaw) with business profile context
 
-If the customer asks something the restaurant agent can't handle, it passes to the **support agent** which does FAQ matching first, then LLM with full conversation context, then escalates to you (via WhatsApp or any connected transport) if needed.
+In other words: the customer flow does **not** send every message to an LLM. It depends on which tool gets selected.
+
+Typical customer tools:
+- **`concierge`** — greetings, small talk, and general business-aware questions. This usually uses the configured customer LLM/backend. If the backend returns nothing, it now falls back to profile-backed answers for hours, email, phone, website, address, and a few light-chat cases like jokes.
+- **`rag_menu`** — grounded menu lookup. Used for price, nutrition, veg/non-veg, calorie, protein, and dish filtering questions.
+- **`order_lookup`** — direct order lookup from the DB. No LLM required.
+- **`order_create`** — direct cart and ordering state machine. No LLM required.
+- **`restaurant_support`** — complaint flow for wrong item, refund, late delivery, or human escalation. It also answers profile-backed support questions like support email before opening the complaint menu.
+
+### Customer Flow In Plain English
+
+Think of customer messages in three buckets:
+
+1. **Direct data questions**
+Examples: `My open orders`, `Where is my order`
+What happens: routed to `order_lookup`, reads the DB directly, no LLM needed.
+
+2. **Menu / policy questions**
+Examples: `high protein dishes`, `veg meals under 300 calories`, `refund policy`
+What happens: routed to retrieval tools like `rag_menu` or `policy_rag`, which answer from grounded business data.
+
+3. **General chat / business-info questions**
+Examples: `hi`, `tell me a joke`, `open hours`, `what is your support email`
+What happens: routed to `concierge` or the support info path, which use the configured customer LLM/backend with business profile context.
+If that backend returns nothing, the system now falls back to saved profile facts where possible.
+
+### When The Customer LLM Is Actually Used
+
+The customer LLM/backend is used mainly for:
+- uncertain intent classification
+- greetings and general chat
+- profile-backed conversational answers
+- some support-info answers
+
+It is **not** used for:
+- active cart/order state transitions
+- direct order lookup
+- direct DB-backed support escalation flow
+
+So the short version is:
+
+`customer message` → `intent router` → `chosen tool`
+
+and only **some** chosen tools use the customer LLM/backend.
 
 ---
 
@@ -122,9 +167,16 @@ When a message comes from your phone number (or is authenticated via the HTTP AP
 
 #### Text messages
 
-You send: `admin <pin> <something>`
+You send: `ray <pin> <something>` or `agent <pin> <something>` depending on the flow you want.
 
-The program strips the keyword and PIN, then looks at what's left:
+The program first checks the **flow hotword**, then the **PIN for that exact flow**, then the **allowed phone number list** for that flow.
+
+- `ray <admin-pin> ...` → admin flow, with workspace/business context
+- `agent <agent-pin> ...` → agent flow, with no workspace context injected into the prompt
+- wrong hotword → treated like a normal customer message
+- correct hotword + wrong PIN → explicit wrong PIN error for that flow
+
+After auth, it looks at what's left:
 
 - **Looks like a shell command** (`pm2 status`, `tail logs/agent.log`) → runs it directly on your Mac and sends back the output
 - **Starts with `agent`** → hands it to the full AI agent loop (see below)

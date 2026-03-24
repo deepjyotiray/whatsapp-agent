@@ -2,7 +2,8 @@
 
 const { exec } = require("child_process")
 const Database = require("better-sqlite3")
-const { complete } = require("../providers/llm")
+const { complete, getFlowConfig } = require("../providers/llm")
+const { prepareRequest } = require("../runtime/contextPipeline")
 const { dispatchAgentTask } = require("./adminAgent")
 const { approveRequest, listApprovals } = require("./adminApprovals")
 const { authorizeToolCall } = require("./adminGovernance")
@@ -15,6 +16,7 @@ const logger = require("./logger")
 
 function getSettings() { return require("../config/settings.json") }
 function getAdminCfg() { return getSettings().admin }
+function getFlowCfg(flow) { return getSettings().flows?.[flow] || {} }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -28,40 +30,86 @@ function getUsers() {
 
 function normalizePhone(p) { return String(p || "").replace(/@.*$/, "").replace(/\D/g, "") }
 
+function getFlowAccessConfig(flow) {
+    const settings = getSettings()
+    const flowCfg = settings.flows?.[flow] || {}
+    const auth = flowCfg.auth || {}
+    const defaultKeyword = flow === "agent"
+        ? (settings.admin?.agent_keyword || "agent")
+        : (settings.admin?.keyword || "admin")
+    const allKnownNumbers = getUsers().map(u => String(u.phone || "")).filter(Boolean)
+    const fallbackNumbers = settings.admin?.number ? [String(settings.admin.number)] : []
+    const allowedNumbers = Array.isArray(auth.allowed_numbers) && auth.allowed_numbers.length
+        ? auth.allowed_numbers.map(normalizePhone).filter(Boolean)
+        : [...new Set([...allKnownNumbers, ...fallbackNumbers].map(normalizePhone).filter(Boolean))]
+    const pin = auth.pin !== undefined
+        ? String(auth.pin)
+        : (flow === "admin" ? String(settings.admin?.pin || "") : String(settings.admin?.pin || ""))
+
+    return {
+        keyword: String(auth.keyword || defaultKeyword).trim(),
+        pin,
+        allowedNumbers,
+    }
+}
+
+function getUserForFlow(phone, flow) {
+    const digits = normalizePhone(phone)
+    const matched = getUsers().find(u => digits.endsWith(normalizePhone(u.phone)))
+    if (matched) return matched
+
+    const access = getFlowAccessConfig(flow)
+    if (access.allowedNumbers.some(n => digits.endsWith(n))) {
+        return {
+            phone: digits,
+            name: flow === "agent" ? "Agent User" : "Admin User",
+            role: getAdminCfg()?.role || "super_admin",
+            mode: "full",
+            pin: access.pin || "",
+        }
+    }
+    return null
+}
+
 // Returns matched user object or null
 function isAdmin(phone) {
     const digits = normalizePhone(phone)
-    return getUsers().find(u => digits.endsWith(normalizePhone(u.phone))) || null
+    return getUserForFlow(digits, "admin") || getUserForFlow(digits, "agent") || null
 }
 
-// Returns { isAdmin: true, user, flow, payload } or { isAdmin: false }
+// Returns { isAdmin: true, user, flow, payload } or an auth failure / customer fallback descriptor
 function parseAdminMessage(message, phone) {
     if (!message) return { isAdmin: false }
-    const user = isAdmin(phone)
-    if (!user) return { isAdmin: false }
-
     const parts = message.trim().split(/\s+/)
-    const adminKeyword = getAdminCfg().keyword || "ray"
-    const agentKeyword = getAdminCfg().agent_keyword || "agent"
-    
-    let flow = null
-    let payloadIdx = 1
+    const first = String(parts[0] || "").toLowerCase()
+    const adminAccess = getFlowAccessConfig("admin")
+    const agentAccess = getFlowAccessConfig("agent")
 
-    if (parts[0].toLowerCase() === adminKeyword.toLowerCase()) {
+    let flow = null
+    let access = null
+    if (first === adminAccess.keyword.toLowerCase()) {
         flow = "admin"
-    } else if (parts[0].toLowerCase() === agentKeyword.toLowerCase()) {
+        access = adminAccess
+    } else if (first === agentAccess.keyword.toLowerCase()) {
         flow = "agent"
+        access = agentAccess
     }
 
     if (!flow) return { isAdmin: false }
 
-    const userPin = user.pin !== undefined ? user.pin : (getAdminCfg().pin || "")
-    if (userPin === "") {
-        // no pin required — everything after keyword is payload
-        return { isAdmin: true, user, flow, payload: parts.slice(payloadIdx).join(" ") }
+    const user = getUserForFlow(phone, flow)
+    if (!user) {
+        return { isAdmin: false, matchedFlow: true, flow, error: "unauthorized_number", message: `⛔ This number is not allowed for ${flow} flow.` }
     }
-    if (parts[1] !== userPin) return { isAdmin: false }
-    return { isAdmin: true, user, flow, payload: parts.slice(payloadIdx + 1).join(" ") }
+
+    const expectedPin = String(access.pin || "")
+    const suppliedPin = String(parts[1] || "")
+    if (expectedPin && suppliedPin !== expectedPin) {
+        return { isAdmin: false, matchedFlow: true, flow, error: "wrong_pin", message: `⛔ Wrong PIN for ${flow} flow.` }
+    }
+
+    const payloadIdx = expectedPin ? 2 : 1
+    return { isAdmin: true, user, flow, payload: parts.slice(payloadIdx).join(" ") }
 }
 
 // ── Shell execution ───────────────────────────────────────────────────────────
@@ -159,7 +207,7 @@ async function queryWithLlm(question, dbContext, workspaceId) {
     const mm = String(now.getMonth() + 1).padStart(2, "0")
     const yyyy = now.getFullYear()
 
-    const adminLlmCfg = getAdminCfg().agent_llm || {}
+    const adminLlmCfg = getSettings().admin?.llm || {}
 
     // Step 1: generate SQL
     const notes = loadNotes(workspaceId)
@@ -212,7 +260,9 @@ Results (${rows.length} rows): ${JSON.stringify(rows).slice(0, 4000)}
 Provide a clear, concise answer.`
 
     try {
-        return await complete(answerPrompt, adminLlmCfg) || `Query returned ${rows.length} rows:\n${JSON.stringify(rows, null, 2)}`
+        const flowCfg = getFlowConfig("admin")
+        const messages = prepareRequest(answerPrompt, "admin", { systemContext: `You are an admin assistant for ${businessName}. Be concise.${currencyHint}` })
+        return await complete(messages, { flow: "admin", llmConfig: flowCfg }) || `Query returned ${rows.length} rows:\n${JSON.stringify(rows, null, 2)}`
     } catch {
         return `Query returned ${rows.length} rows:\n${JSON.stringify(rows, null, 2)}`
     }
@@ -230,7 +280,9 @@ ${dbContext}
 Admin question: ${question}
 Answer:`
     try {
-        return await complete(prompt, adminLlmCfg) || "No response from LLM."
+        const flowCfg = getFlowConfig("admin")
+        const messages = prepareRequest(prompt, "admin", { dynamicContext: dbContext })
+        return await complete(messages, { flow: "admin", llmConfig: flowCfg }) || "No response from LLM."
     } catch {
         return "LLM unavailable. Raw data:\n" + dbContext
     }
@@ -259,8 +311,9 @@ ${notes ? `\nData model notes:\n${notes}\n` : ""}
 Return ONLY a comma-separated list of table names, no other text.`
 
     try {
-        const adminLlmCfg = getAdminCfg().agent_llm || {}
-        const res = await complete(prompt, { ...adminLlmCfg, max_tokens: 50 })
+        const flowCfg = getFlowConfig("admin")
+        const messages = prepareRequest(prompt, "admin", { dynamicContext: notes ? `Data model notes:\n${notes}\n` : "" })
+        const res = await complete(messages, { flow: "admin", llmConfig: flowCfg, max_tokens: 50 })
         if (!res) return allTables
         const selected = res.split(",").map(s => s.trim()).filter(s => allTables.includes(s))
         return selected.length > 0 ? selected : allTables
@@ -271,7 +324,10 @@ Return ONLY a comma-separated list of table names, no other text.`
 
 async function handleAdmin(payload, options = {}) {
     const flow = options.flow || "admin" // default to admin flow
-    if (!payload) return `⚙️ ${flow === "agent" ? "Agent" : "Admin"} ready. Usage: \`${flow === "agent" ? (getAdminCfg().agent_keyword || "agent") : (getAdminCfg().keyword || "ray")} <pin> <command or question>\``
+    if (!payload) {
+        const access = getFlowAccessConfig(flow)
+        return `⚙️ ${flow === "agent" ? "Agent" : "Admin"} ready. Usage: \`${access.keyword} ${access.pin ? "<pin> " : ""}<command or question>\``
+    }
     
     const workspaceId = options.workspaceId || getActiveWorkspace()
     const user = options.user || {}
@@ -318,7 +374,7 @@ async function handleAdmin(payload, options = {}) {
             const task = payload.replace(/^agent\s+/i, "").trim()
             logger.info({ task, user: user.name, isExplicitAgent }, "admin: agentic mode")
             // Only set noContext: true if it's an explicit "agent" command
-            return await dispatchAgentTask(task, { workspaceId, role, noContext: isExplicitAgent })
+            return await dispatchAgentTask(task, { workspaceId, role, noContext: isExplicitAgent, flow })
         }
     }
 
@@ -326,7 +382,7 @@ async function handleAdmin(payload, options = {}) {
     if (/\b(add|record|insert|update|change|set|delete|remove|mark)\b/i.test(payload)) {
         if (mode === "query_only" || mode === "shell_only") return `⛔ Your access level (${mode}) does not allow mutations.`
         logger.info({ payload, user: user.name }, "admin: mutation detected, routing to agent")
-        return await dispatchAgentTask(payload, { workspaceId, role })
+        return await dispatchAgentTask(payload, { workspaceId, role, flow })
     }
 
     if (looksLikeShell(payload)) {
@@ -414,10 +470,10 @@ registerGuide({
     },
 })
 
-module.exports = { 
-    isAdmin, 
-    parseAdminMessage, 
-    handleAdmin, 
+module.exports = {
+    isAdmin,
+    parseAdminMessage,
+    handleAdmin,
     handleAdminImage, 
     getShellPatterns, 
     getUsers, 

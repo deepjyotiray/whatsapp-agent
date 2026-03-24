@@ -2,6 +2,8 @@
 
 const logger = require("../gateway/logger")
 const { getActiveWorkspace } = require("../core/workspace")
+const { prepareRequest } = require("./contextPipeline")
+const { complete, getFlowConfig } = require("../providers/llm")
 
 let _cachedProfile = null
 let _cachedWorkspace = null
@@ -90,6 +92,17 @@ async function execute(manifest, intent, context) {
     logger.info({ intent: intent.intent, tool: toolName }, "executor: dispatching")
     context.profile = getProfile()
     context.profileFacts = buildProfileFacts(context.profile, toolName)
+    
+    // Resolve flow and LLM config
+    context.flow = context.flow || "customer"
+    context.llmConfig = manifest.agent?.llm || getFlowConfig(context.flow)
+
+    // Standard context prep for tools that use LLM directly
+    context.prepareLLMRequest = (prompt, options = {}) => {
+        const messages = prepareRequest(prompt, context.flow, context)
+        return complete(messages, { ...options, flow: context.flow, llmConfig: context.llmConfig })
+    }
+
     return await tool.execute(intent.filter || {}, context, toolConfig)
 }
 

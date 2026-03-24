@@ -17,10 +17,9 @@ const agentChain = require("../runtime/agentChain")
  */
 async function pipeline(message, phone) {
     // 0. Admin intercept — before all other checks
-    if (isAdmin(phone)) {
-        const admin = parseAdminMessage(message)
-        if (admin.isAdmin) return await handleAdmin(admin.payload)
-    }
+    const admin = parseAdminMessage(message, phone)
+    if (admin.isAdmin) return await handleAdmin(admin.payload, { user: admin.user, flow: admin.flow })
+    if (admin.matchedFlow && admin.message) return admin.message
 
     // 1. Input Sanitization
     const sanity = sanitize(message)

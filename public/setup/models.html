@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SecureAI — Models</title>
+  <link rel="stylesheet" href="/setup/shared.css">
+</head><body>
+  <main class="page">
+    <div class="page-header">
+      <h2>Agent Configuration</h2>
+      <p>Configure per-flow backends, models, hotwords, PINs, and allowed numbers.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Flow Settings</h3>
+        <button class="btn btn-ghost btn-sm" onclick="loadFlowConfigs()">Refresh</button>
+      </div>
+      <div class="card-body">
+        <div style="margin-bottom:15px; display:flex; gap:12px; align-items:center">
+          <label style="font-weight:600; font-size:0.85rem">Select Flow:</label>
+          <select id="flow-selector" onchange="switchFlow(this.value)" style="padding:6px 10px; border-radius:var(--radius-sm); border:1px solid var(--border); background:var(--surface-2); color:var(--text); font-size:0.85rem; width: auto;">
+            <option value="customer">Customer Flow</option>
+            <option value="admin">Admin Flow</option>
+            <option value="agent">Agent Flow</option>
+          </select>
+        </div>
+
+        <div id="flow-config-editor" style="padding:15px; border:1px solid var(--border); border-radius:var(--radius); background:rgba(124,111,247,.02)">
+          <!-- Current flow config will be injected here -->
+        </div>
+
+        <div style="margin-top:20px; padding-top:15px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center">
+          <button class="btn btn-primary" onclick="saveCurrentFlowConfig()">Save & Clear Sessions</button>
+          <span id="flow-save-status" style="font-size:0.75rem"></span>
+        </div>
+      </div>
+    </div>
+  </main>
+  <script src="/setup/shared.js"></script>
+  <script src="/setup/models.js"></script>
+</body></html>

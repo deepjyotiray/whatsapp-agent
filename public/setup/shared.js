@@ -32,16 +32,17 @@ function setText(id, t) { const e = $(id); if (e) e.textContent = t }
 // ── Sidebar + Topbar ─────────────────────────────────────────────────────────
 
 const NAV = [
-  { group: "Main", items: [
-    { id: "dashboard", icon: "◉", label: "Dashboard", href: "/" },
-    { id: "profile", icon: "◎", label: "Profile", href: "/profile" },
-    { id: "chat", icon: "◈", label: "Chat Sandbox", href: "/chat" },
+  { group: "Workspace", items: [
+    { id: "dashboard", icon: "▣", label: "Dashboard", href: "/" },
+    { id: "profile", icon: "◐", label: "Profile", href: "/profile" },
+    { id: "chat", icon: "◑", label: "Chat", href: "/chat" },
   ]},
-  { group: "Operations", items: [
+  { group: "Agent Management", items: [
     { id: "admin", icon: "⚙", label: "Admin", href: "/admin" },
     { id: "tools", icon: "⬡", label: "Agent Tools", href: "/tools" },
     { id: "intercept", icon: "◇", label: "Interceptor", href: "/intercept" },
     { id: "control", icon: "▣", label: "Control Panel", href: "/control" },
+    { id: "models", icon: "◈", label: "Models", href: "/models" },
   ]},
 ]
 

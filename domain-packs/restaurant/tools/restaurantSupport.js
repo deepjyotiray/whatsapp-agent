@@ -21,6 +21,32 @@ const PROMPTS = {
 
 const LABELS = { 1: "Wrong/missing item", 2: "Late delivery", 3: "Payment issue", 4: "Refund request", 5: "Talk to human" }
 
+const SUPPORT_INFO_HINTS = [
+    /\b(email|e-mail|mail)\b/i,
+    /\bphone\b/i,
+    /\bcontact\b/i,
+    /\bsupport\b/i,
+    /\bhours?\b/i,
+    /\bopen\b/i,
+    /\baddress\b/i,
+    /\blocation\b/i,
+    /\brefund\b/i,
+    /\bpolicy\b/i,
+    /\bpayment methods?\b/i,
+]
+
+const COMPLAINT_HINTS = [
+    /\bwrong\b/i,
+    /\bmissing\b/i,
+    /\blate\b/i,
+    /\bdelay(ed)?\b/i,
+    /\brefund\b/i,
+    /\bissue\b/i,
+    /\bproblem\b/i,
+    /\bcomplaint\b/i,
+    /\bhuman\b/i,
+]
+
 function normalisePhone(p) { return String(p).replace(/@.*$/, "").replace(/\D/g, "") }
 
 function getCustomerContext(dbPath, phone) {
@@ -58,6 +84,46 @@ async function escalate(phone, issueLabel, issueText, customerContext, adminPhon
     }
 }
 
+function isSupportInfoQuestion(text) {
+    return SUPPORT_INFO_HINTS.some(re => re.test(text)) && !/^\d+$/.test(text.trim())
+}
+
+function isComplaintLike(text) {
+    return COMPLAINT_HINTS.some(re => re.test(text))
+}
+
+function deterministicSupportInfo(profile = {}) {
+    const lines = []
+    if (profile.contactEmail) lines.push(`Support email: ${profile.contactEmail}`)
+    if (profile.contactPhone) lines.push(`Support phone: ${profile.contactPhone}`)
+    if (profile.website) lines.push(`Website: ${profile.website}`)
+    if (profile.businessHours) lines.push(`Business hours: ${profile.businessHours}`)
+    return lines.join("\n") || "Please contact our support team and we'll help you shortly."
+}
+
+async function answerSupportInfo(text, context) {
+    const profile = context.profile || {}
+    const prompt = `[INST] You are a customer support assistant for ${profile.businessName || "the business"}.
+Answer using ONLY the grounded business profile details below.
+If the requested detail is missing, say you do not have that detail available and invite the customer to contact the team directly.
+Keep the answer short and WhatsApp-friendly.
+
+Business profile:
+${context.profileFacts || "No profile data available."}
+
+Customer question:
+${text}
+[/INST]`
+
+    try {
+        if (typeof context.prepareLLMRequest === "function") {
+            const textReply = await context.prepareLLMRequest(prompt)
+            if (textReply) return textReply
+        }
+    } catch {}
+    return deterministicSupportInfo(profile)
+}
+
 async function execute(_params, context, toolConfig) {
     const { phone, rawMessage: msg } = context
     const { db_path, escalation_phone } = toolConfig
@@ -67,6 +133,10 @@ async function execute(_params, context, toolConfig) {
     const key  = `support:${phone}`
 
     let c = cart.get(key)
+
+    if (!c && isSupportInfoQuestion(text) && !isComplaintLike(text)) {
+        return await answerSupportInfo(text, context)
+    }
 
     if (!c) {
         cart.set(key, { state: "menu" })

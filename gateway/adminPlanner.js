@@ -23,13 +23,19 @@ function fallbackPlan(task) {
 }
 
 async function buildAdminPlan(task, context = {}) {
+    const { prepareRequest } = require("../runtime/contextPipeline")
+    const flow = context.flow || "admin"
     const workers = listWorkers().map(worker =>
         `- ${worker.name}: ${worker.description}. Strengths: ${worker.strengths.join(", ")}`
     ).join("\n")
-    const prompt = `You are the planner for a secure admin operations agent.
+    
+    const systemContext = `You are the planner for a secure admin operations agent.
 Return JSON only.
+Business context: ${context.businessName || "Business not specified"}
+Available workers:
+${workers}`
 
-Create a short execution plan for this admin task. Keep it practical, tool-oriented, and safe.
+    const prompt = `Create a short execution plan for this admin task. Keep it practical, tool-oriented, and safe.
 Use 2 to 5 steps max.
 
 Available tool families:
@@ -40,12 +46,6 @@ Available tool families:
 - file read/write and node execution
 - whatsapp sending
 - skills
-
-Business context:
-${context.businessName || "Business not specified"}
-
-Available workers:
-${workers}
 
 Task:
 ${task}
@@ -64,7 +64,8 @@ Return exactly:
 }`
 
     try {
-        const text = await complete(prompt)
+        const messages = prepareRequest(prompt, flow, { systemContext })
+        const text = await complete(messages, { flow })
         const parsed = safeJson(text)
         if (!parsed || !Array.isArray(parsed.steps) || !parsed.steps.length) return fallbackPlan(task)
         return {

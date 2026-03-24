@@ -89,6 +89,7 @@ async function routeCustomerMessage(message, manifest) {
         defaultIntent: configuredIntents.includes("general_chat") ? "general_chat" : configuredIntents[0] || "general_chat",
         filterSchema: filterConfig.schema,
         filterExamples: filterConfig.examples,
+        llmConfig: manifest.agent?.llm
     })
 
     if (!parsed?.intent || !configuredIntents.includes(parsed.intent)) {

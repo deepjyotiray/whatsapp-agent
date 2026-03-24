@@ -247,6 +247,51 @@ To add more admin users later, use the Setup UI at `http://localhost:3010/tools`
 
 ## Step 5 — Verify the Full Flow
 
+### How Customer Messages Actually Work
+
+For a layman, the easiest way to think about the customer flow is:
+
+`message` → `intent router` → `tool`
+
+The system does **not** send every customer message to the LLM.
+
+Instead:
+
+1. The router tries fast heuristics first.
+   Examples:
+   - `hi` → greeting
+   - `my open orders` → order lookup
+   - `i need help` → support
+
+2. If heuristics are not enough, the intent parser LLM chooses the intent.
+
+3. The selected tool decides how to answer:
+   - **Direct DB / session tools**: `order_lookup`, `order_create`
+   - **Grounded retrieval tools**: `rag_menu`, `policy_rag`
+   - **LLM-backed tools**: `concierge`, support-info answers
+
+Examples:
+
+- `My open orders`
+  → `order_lookup`
+  → direct database lookup
+  → no LLM needed
+
+- `High protein dishes`
+  → `rag_menu`
+  → grounded menu retrieval
+  → returns from menu data
+
+- `Open hours`
+  → `concierge`
+  → tries the configured customer backend first
+  → if that backend returns nothing, falls back to the saved business profile
+
+- `What is your support email`
+  → support intent
+  → first checks for profile-backed support info
+  → only opens the complaint menu for actual complaint-style issues
+
 ### Order placement flow (WhatsApp)
 
 1. Customer sends: `I want to order`

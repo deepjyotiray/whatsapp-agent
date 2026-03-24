@@ -3,166 +3,158 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Control Panel</title>
-  <link rel="stylesheet" href="/setup/assets/control.css">
+  <title>SecureAI — Control Panel</title>
+  <link rel="stylesheet" href="/setup/shared.css">
+  <link rel="stylesheet" href="/setup/control.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-left">
-      <span class="logo">SecureAI</span>
-      <h1>Control Panel</h1>
+  <main class="page control-page">
+    <div class="page-header">
+      <h2>Control Panel</h2>
+      <p>Preview the full pipeline, inspect policy, and approve or reject execution.</p>
     </div>
-    <div class="topbar-right">
-      <label class="auto-toggle" title="Auto-execute low-risk requests">
-        <input type="checkbox" id="auto-mode-toggle">
-        <span class="toggle-label">Auto Mode</span>
-      </label>
-      <a href="/intercept" class="nav-link">Interceptor</a>
-      <a href="/" class="nav-link">Console</a>
-    </div>
-  </header>
 
-  <!-- Input bar -->
-  <section class="input-bar">
-    <input id="phone-input" type="text" placeholder="Phone (e.g. 919999999999)" value="control-panel">
-    <input id="msg-input" type="text" placeholder="Enter message to preview…" autofocus>
-    <button id="btn-preview" class="btn-primary">Preview</button>
-  </section>
-
-  <!-- History sidebar + main content -->
-  <main class="layout">
-    <aside class="history-panel" id="history-panel">
-      <h3>Workflows</h3>
-      <div id="workflow-list"></div>
-      <h3 style="margin-top:16px">History</h3>
-      <div id="history-list"></div>
-    </aside>
-
-    <div class="main-content" id="main-content">
-      <div class="empty-state" id="empty-state">
-        <p>Enter a message above and click <strong>Preview</strong> to inspect the full pipeline.</p>
+    <section class="input-bar card">
+      <div class="control-toolbar">
+        <label class="auto-toggle" title="Auto-execute low-risk requests">
+          <input type="checkbox" id="auto-mode-toggle">
+          <span class="toggle-label">Auto Mode</span>
+        </label>
       </div>
+      <input id="phone-input" type="text" placeholder="Phone (e.g. 919999999999)" value="control-panel">
+      <input id="msg-input" type="text" placeholder="Enter message to preview…" autofocus>
+      <button id="btn-preview" class="btn btn-primary">Preview</button>
+    </section>
 
-      <!-- Auto-execute banner -->
-      <div class="auto-banner hidden" id="auto-banner">
-        <span class="auto-banner-icon">⚡</span>
-        <span id="auto-banner-text">Auto-executed (low risk)</span>
-      </div>
+    <div class="layout">
+      <aside class="history-panel card" id="history-panel">
+        <h3>Workflows</h3>
+        <div id="workflow-list"></div>
+        <h3 style="margin-top:16px">History</h3>
+        <div id="history-list"></div>
+      </aside>
 
-      <!-- Summary Header -->
-      <div class="panel hidden" id="panel-summary">
-        <div class="panel-head">
-          <span class="panel-num">ℹ</span>
-          <h2>Summary</h2>
-          <span id="summary-risk" class="risk-badge"></span>
-          <span id="summary-mode" class="mode-badge"></span>
+      <div class="main-content" id="main-content">
+        <div class="empty-state" id="empty-state">
+          <p>Enter a message above and click <strong>Preview</strong> to inspect the full pipeline.</p>
         </div>
-        <div class="panel-body">
-          <div id="summary-title" class="summary-title"></div>
-          <ol id="summary-steps" class="summary-steps"></ol>
-        </div>
-      </div>
 
-      <!-- Explanation Panel -->
-      <div class="panel hidden" id="panel-explanation">
-        <div class="panel-head">
-          <span class="panel-num">?</span>
-          <h2>Why This Decision</h2>
+        <div class="auto-banner hidden" id="auto-banner">
+          <span class="auto-banner-icon">⚡</span>
+          <span id="auto-banner-text">Auto-executed (low risk)</span>
         </div>
-        <div class="panel-body">
-          <div class="kv-row"><span class="kv-label">Intent</span><span id="explain-intent" class="kv-val"></span></div>
-          <div class="kv-row"><span class="kv-label">Tool</span><span id="explain-tool" class="kv-val"></span></div>
-          <div class="kv-row"><span class="kv-label">Risk</span><span id="explain-risk" class="kv-val"></span></div>
-          <div class="kv-row hidden" id="explain-plan-row"><span class="kv-label">Plan</span><span id="explain-plan" class="kv-val"></span></div>
-          <div class="kv-row hidden" id="explain-flow-row"><span class="kv-label">Flow</span><span id="explain-flow" class="kv-val"></span></div>
-        </div>
-      </div>
 
-      <!-- Panel 1: Input Trace -->
-      <div class="panel hidden" id="panel-input">
-        <div class="panel-head">
-          <span class="panel-num">1</span>
-          <h2>Input Trace</h2>
+        <div class="panel hidden" id="panel-summary">
+          <div class="panel-head">
+            <span class="panel-num">ℹ</span>
+            <h2>Summary</h2>
+            <span id="summary-risk" class="risk-badge"></span>
+            <span id="summary-mode" class="mode-badge"></span>
+          </div>
+          <div class="panel-body">
+            <div id="summary-title" class="summary-title"></div>
+            <ol id="summary-steps" class="summary-steps"></ol>
+          </div>
         </div>
-        <div class="panel-body">
-          <div class="kv-row"><span class="kv-label">Raw</span><code id="trace-raw" class="kv-val"></code></div>
-          <div class="kv-row"><span class="kv-label">Sanitized</span><code id="trace-sanitized" class="kv-val"></code></div>
-          <div class="kv-row"><span class="kv-label">Status</span><span id="trace-status" class="badge"></span></div>
-        </div>
-      </div>
 
-      <!-- Panel 2: Intent -->
-      <div class="panel hidden" id="panel-intent">
-        <div class="panel-head">
-          <span class="panel-num">2</span>
-          <h2>Intent Classification</h2>
+        <div class="panel hidden" id="panel-explanation">
+          <div class="panel-head">
+            <span class="panel-num">?</span>
+            <h2>Why This Decision</h2>
+          </div>
+          <div class="panel-body">
+            <div class="kv-row"><span class="kv-label">Intent</span><span id="explain-intent" class="kv-val"></span></div>
+            <div class="kv-row"><span class="kv-label">Tool</span><span id="explain-tool" class="kv-val"></span></div>
+            <div class="kv-row"><span class="kv-label">Risk</span><span id="explain-risk" class="kv-val"></span></div>
+            <div class="kv-row hidden" id="explain-plan-row"><span class="kv-label">Plan</span><span id="explain-plan" class="kv-val"></span></div>
+            <div class="kv-row hidden" id="explain-flow-row"><span class="kv-label">Flow</span><span id="explain-flow" class="kv-val"></span></div>
+          </div>
         </div>
-        <div class="panel-body">
-          <div class="kv-row"><span class="kv-label">Intent</span><code id="intent-name" class="kv-val intent-tag"></code></div>
-          <div class="kv-row"><span class="kv-label">Source</span><span id="intent-source" class="badge"></span></div>
-          <div class="kv-row"><span class="kv-label">Filter</span><code id="intent-filter" class="kv-val mono"></code></div>
-          <div id="intent-gates" class="gates-mini"></div>
-        </div>
-      </div>
 
-      <!-- Panel 3: Policy -->
-      <div class="panel hidden" id="panel-policy">
-        <div class="panel-head">
-          <span class="panel-num">3</span>
-          <h2>Policy Evaluation</h2>
+        <div class="panel hidden" id="panel-input">
+          <div class="panel-head">
+            <span class="panel-num">1</span>
+            <h2>Input Trace</h2>
+          </div>
+          <div class="panel-body">
+            <div class="kv-row"><span class="kv-label">Raw</span><code id="trace-raw" class="kv-val"></code></div>
+            <div class="kv-row"><span class="kv-label">Sanitized</span><code id="trace-sanitized" class="kv-val"></code></div>
+            <div class="kv-row"><span class="kv-label">Status</span><span id="trace-status" class="badge"></span></div>
+          </div>
         </div>
-        <div class="panel-body">
-          <div id="policy-status" class="policy-status"></div>
-          <ul id="policy-checks" class="check-list"></ul>
-        </div>
-      </div>
 
-      <!-- Panel 4: Execution Plan -->
-      <div class="panel hidden" id="panel-plan">
-        <div class="panel-head">
-          <span class="panel-num">4</span>
-          <h2>Execution Plan</h2>
+        <div class="panel hidden" id="panel-intent">
+          <div class="panel-head">
+            <span class="panel-num">2</span>
+            <h2>Intent Classification</h2>
+          </div>
+          <div class="panel-body">
+            <div class="kv-row"><span class="kv-label">Intent</span><code id="intent-name" class="kv-val intent-tag"></code></div>
+            <div class="kv-row"><span class="kv-label">Source</span><span id="intent-source" class="badge"></span></div>
+            <div class="kv-row"><span class="kv-label">Filter</span><code id="intent-filter" class="kv-val mono"></code></div>
+            <div id="intent-gates" class="gates-mini"></div>
+          </div>
         </div>
-        <div class="panel-body">
-          <div id="plan-steps"></div>
-          <div id="plan-empty" class="empty-plan hidden">No execution steps — policy blocked or tool unresolved.</div>
+
+        <div class="panel hidden" id="panel-policy">
+          <div class="panel-head">
+            <span class="panel-num">3</span>
+            <h2>Policy Evaluation</h2>
+          </div>
+          <div class="panel-body">
+            <div id="policy-status" class="policy-status"></div>
+            <ul id="policy-checks" class="check-list"></ul>
+          </div>
         </div>
-      </div>
 
-      <!-- Action Bar -->
-      <div class="action-bar hidden" id="action-bar">
-        <button id="btn-approve" class="btn-approve">✓ Approve & Execute</button>
-        <button id="btn-reject" class="btn-reject">✗ Reject</button>
-        <button id="btn-save-workflow" class="btn-save-wf" title="Save current plan as reusable workflow">⭐ Save as Workflow</button>
-        <span id="approval-warning" class="approval-warning hidden">⚠ High-risk — approval required</span>
-      </div>
-
-      <!-- Blocked Banner -->
-      <div class="blocked-banner hidden" id="blocked-banner">
-        <span class="blocked-icon">⛔</span>
-        <span id="blocked-text">Execution blocked</span>
-      </div>
-
-      <!-- Result Panel -->
-      <div class="panel hidden" id="panel-result">
-        <div class="panel-head">
-          <span class="panel-num">✓</span>
-          <h2>Execution Result</h2>
+        <div class="panel hidden" id="panel-plan">
+          <div class="panel-head">
+            <span class="panel-num">4</span>
+            <h2>Execution Plan</h2>
+          </div>
+          <div class="panel-body">
+            <div id="plan-steps"></div>
+            <div id="plan-empty" class="empty-plan hidden">No execution steps — policy blocked or tool unresolved.</div>
+          </div>
         </div>
-        <div class="panel-body" id="result-body"></div>
-      </div>
 
-      <!-- Gate Detail Drawer -->
-      <div class="panel hidden" id="panel-gates">
-        <div class="panel-head">
-          <span class="panel-num">⚙</span>
-          <h2>Pipeline Gates (Full Detail)</h2>
+        <div class="action-bar hidden" id="action-bar">
+          <button id="btn-approve" class="btn-approve">✓ Approve & Execute</button>
+          <button id="btn-reject" class="btn-reject">✗ Reject</button>
+          <button id="btn-save-workflow" class="btn-save-wf" title="Save current plan as reusable workflow">⭐ Save as Workflow</button>
+          <span id="approval-warning" class="approval-warning hidden">⚠ High-risk — approval required</span>
         </div>
-        <div class="panel-body" id="gates-detail"></div>
+
+        <div class="blocked-banner hidden" id="blocked-banner">
+          <span class="blocked-icon">⛔</span>
+          <span id="blocked-text">Execution blocked</span>
+        </div>
+
+        <div class="panel hidden" id="panel-result">
+          <div class="panel-head">
+            <span class="panel-num">✓</span>
+            <h2>Execution Result</h2>
+          </div>
+          <div class="panel-body" id="result-body"></div>
+        </div>
+
+        <div class="panel hidden" id="panel-gates">
+          <div class="panel-head">
+            <span class="panel-num">⚙</span>
+            <h2>Pipeline Gates (Full Detail)</h2>
+          </div>
+          <div class="panel-body" id="gates-detail"></div>
+        </div>
       </div>
     </div>
   </main>
 
-  <script src="/setup/assets/control.js"></script>
+  <script src="/setup/shared.js"></script>
+  <script src="/setup/control.js"></script>
+  <script>
+    buildShell("control")
+    document.getElementById("topbar-title").textContent = "Control Panel"
+    initWorkspace().catch(function () {})
+  </script>
 </body>
 </html>

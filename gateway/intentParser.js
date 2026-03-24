@@ -59,6 +59,10 @@ function extractJson(text) {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function parseIntent(message, options = {}) {
+    // Resolve LLM config: options.llmConfig > settings.customer.llm > default
+    const settings = require("../config/settings.json")
+    const llmConfig = options.llmConfig || settings.customer?.llm
+
     const allowedIntents = Array.isArray(options.allowedIntents) && options.allowedIntents.length
         ? options.allowedIntents
         : ["greet", "support", "general_chat", "unknown"]
@@ -104,7 +108,7 @@ Return exactly:
 {"intent":"${defaultIntent}","filter":${filterTemplate}}`
 
     try {
-        const text = await complete(prompt)
+        const text = await complete(prompt, llmConfig)
         const parsed = extractJson(text)
         if (!parsed || typeof parsed.intent !== "string") return { intent: defaultIntent, filter: {} }
         if (!allowedIntents.includes(parsed.intent)) return { intent: defaultIntent, filter: {} }

@@ -15,6 +15,8 @@ const { getActiveWorkspace } = require("../core/workspace")
 const { loadProfile } = require("../setup/profileService")
 const { loadNotes } = require("../core/dataModelNotes")
 const { getPackForWorkspace } = require("../core/domainPacks")
+function getLlm() { return require("../providers/llm") }
+const { prepareRequest } = require("../runtime/contextPipeline")
 const {
     createTaskState,
     appendToolCall,
@@ -923,17 +925,77 @@ async function sendScreenshotToAdmin(imagePath) {
     }
 }
 
+function parseDirectMacTask(task) {
+    const text = String(task || "").trim()
+    const openMatch = text.match(/^(?:open|launch|start)\s+(.+)$/i)
+    if (openMatch) {
+        const appName = openMatch[1].trim()
+        if (appName) {
+            return {
+                tool: "mac_automation",
+                args: {
+                    type: "applescript",
+                    script: `tell application "${appName}" to activate`
+                },
+                summary: `Opening ${appName}.`,
+            }
+        }
+    }
+
+    const quitMatch = text.match(/^(?:quit|close)\s+(.+)$/i)
+    if (quitMatch) {
+        const appName = quitMatch[1].trim()
+        if (appName) {
+            return {
+                tool: "mac_automation",
+                args: {
+                    type: "applescript",
+                    script: `tell application "${appName}" to quit`
+                },
+                summary: `Closing ${appName}.`,
+            }
+        }
+    }
+
+    return null
+}
+
 async function runAgentLoop(task, options = {}) {
-    const cfg      = settings.admin.agent_llm || {}
+    const directMacTask = parseDirectMacTask(task)
+    if (directMacTask) {
+        const directResult = await dispatchTool(directMacTask.tool, directMacTask.args, {
+            role: settings.admin?.role || "super_admin",
+            worker: "operator",
+            task,
+            taskId: null,
+            workspaceId: options.workspaceId || getActiveWorkspace(),
+        })
+        if (String(directResult).startsWith("❌") || String(directResult).startsWith("🚫")) {
+            return String(directResult)
+        }
+        return `✅ ${directMacTask.summary}`
+    }
+
+    const liveSettings = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
+    const adminAgentCfg = liveSettings.admin?.agent_llm || {}
+    const flowAgentCfg = liveSettings.agent?.llm || {}
+    const cfg = {
+        provider: flowAgentCfg.provider || adminAgentCfg.provider || "openai",
+        model: flowAgentCfg.model || adminAgentCfg.model || "gpt-4o",
+        api_key: flowAgentCfg.api_key || adminAgentCfg.api_key || "",
+        base_url: flowAgentCfg.base_url || adminAgentCfg.base_url || "",
+    }
     const apiKey   = cfg.api_key
-    if (!apiKey) return "❌ No API key configured. Set admin.agent_llm.api_key in settings.json."
+    // Allow non-OpenAI if provider is set, but default to OpenAI for safety in this complex agent
+    const providerName = cfg.provider || "openai"
+    
+    if (!apiKey && providerName === "openai") return "❌ No API key configured. Set admin.agent_llm.api_key or agent.llm.api_key in settings.json."
 
     const model        = cfg.model || "gpt-4o"
-    const apiUrl       = cfg.url   || "https://api.openai.com/v1/chat/completions"
     const workspaceId  = options.workspaceId || getActiveWorkspace()
     const workspaceProfile = loadProfile(workspaceId)
-    const businessName = workspaceProfile.businessName || settings.admin.business_name || "the business"
-    const adminRole    = settings.admin.role || "super_admin"
+    const businessName = workspaceProfile.businessName || settings.admin?.business_name || "the business"
+    const adminRole    = settings.admin?.role || "super_admin"
     const taskState    = createTaskState(task, { businessName, model }, workspaceId)
     const plan         = await buildAdminPlan(task, { businessName })
     setPlan(taskState.taskId, plan.steps, workspaceId)
@@ -991,31 +1053,32 @@ ${await (async () => {
         }
         messages = sanitized
 
-        let res, data
-        for (let attempt = 0; attempt < 3; attempt++) {
-            res  = await fetch(apiUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-                body: JSON.stringify({ model, messages, tools: resolveToolDefinitions(workspaceId) })
+        let data
+        try {
+            const tools = resolveToolDefinitions(workspaceId)
+            const response = await getLlm().complete(messages, { 
+                flow: "agent", 
+                llmConfig: cfg, 
+                tools, 
+                fullResponse: true 
             })
-            data = await res.json()
-            if (res.status === 429) {
+            data = response
+        } catch (err) {
+            if (err.status === 429) {
                 const retryAfterMs = (() => {
-                    const msg = data.error?.message || ""
+                    const errorBody = typeof err.data === 'string' ? JSON.parse(err.data) : (err.data || {})
+                    const msg = errorBody.error?.message || ""
                     const match = msg.match(/(\d+)ms/)
                     return match ? parseInt(match[1]) + 200 : 2000
                 })()
-                logger.warn({ attempt, retryAfterMs }, "adminAgent: rate limited, retrying")
+                logger.warn({ retryAfterMs }, "adminAgent: rate limited, retrying")
                 await new Promise(r => setTimeout(r, retryAfterMs))
+                turns--
                 continue
             }
-            break
-        }
-
-        if (!res.ok) {
-            logger.error({ status: res.status, body: JSON.stringify(data).slice(0,500), sentMessages: messages.map(m => ({ role: m.role, tool_calls: m.tool_calls?.map(t=>t.id), tool_call_id: m.tool_call_id })) }, "adminAgent: LLM error")
+            logger.error({ err: err.message }, "adminAgent: LLM error")
             await computerTool.closeBrowser().catch(() => {})
-            return `❌ LLM error: ${data.error?.message || res.status}`
+            return `❌ LLM error: ${err.message}`
         }
 
         const message = data.choices?.[0]?.message ?? data.message
@@ -1116,13 +1179,87 @@ registerGuide({
 
 // ── OpenClaw Gateway backend ─────────────────────────────────────────────────
 
+function renderMessagesForOpenClaw(messages = []) {
+    return messages
+        .filter(msg => msg && msg.content != null)
+        .map(msg => {
+            const role = String(msg.role || "user").toUpperCase()
+            const content = Array.isArray(msg.content)
+                ? msg.content.map(part => {
+                    if (typeof part === "string") return part
+                    if (part && typeof part.text === "string") return part.text
+                    return JSON.stringify(part)
+                }).join("\n")
+                : String(msg.content)
+            return `${role}:\n${content}`.trim()
+        })
+        .join("\n\n")
+}
+
 async function runOpenClawAgent(task, options = {}) {
+    const flow = (options.backend === 'openclaw' || options.backend === 'myclaw' || options.backend === 'nemoclaw') ? 'agent' : (options.flow || 'agent')
+    const llm = getLlm()
+    const resolveFlowConfig = llm && typeof llm.getFlowConfig === "function"
+        ? llm.getFlowConfig.bind(llm)
+        : null
+    const flowCfg = resolveFlowConfig ? resolveFlowConfig(flow) : {}
+    
+    // Check if we should use a specific backend instead of direct LLM
+    if (flowCfg.backend && flowCfg.backend !== 'direct' && !options._backend_redirect) {
+        const BackendAdapter = require("../providers/adapters/backend")
+        const adapter = new BackendAdapter(flowCfg)
+        return await adapter.complete(task, { ...options, flow, _backend_redirect: true })
+    }
+
     return new Promise(async (resolve) => {
-        const timeout = 120 // seconds
+        const executionFlow = options.flow || flow || "agent"
+        const openclawAgent = executionFlow === "admin" ? "admin" : "agent"
         const workspaceId = options.workspaceId || getActiveWorkspace()
+        const timeout = Number(options.timeout || 90)
         
+        const hasNativeMessages = Array.isArray(options.messages) && options.messages.length > 0
+
+        // Use tools from settings if available, otherwise fallback to CORE_TOOL_DEFINITIONS
+        const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
+        const allowedToolNames = executionFlow === "agent" ? (cfg.admin?.agent_tools || []) : (cfg.admin?.tools || [])
+        
+        // Map common tool names to their core implementation names
+        const toolMap = { "shell": "run_shell", "db": "query_db", "sql": "query_db" }
+        const normalizedAllowed = allowedToolNames.map(n => toolMap[n] || n)
+        
+        const filteredTools = normalizedAllowed.length > 0
+            ? CORE_TOOL_DEFINITIONS.filter(t => normalizedAllowed.includes(t.function.name))
+            : CORE_TOOL_DEFINITIONS
+
+        if (!hasNativeMessages) {
+            // Inject tool implementations into TOOLS.md for OpenClaw's internal reference
+            try {
+                const openclawToolsPath = path.resolve(process.env.HOME, `.openclaw/${openclawAgent}_workspace/TOOLS.md`)
+                if (fs.existsSync(openclawToolsPath)) {
+                    let toolsMd = fs.readFileSync(openclawToolsPath, "utf8")
+                    const toolRegistryHeader = "## ACTIVE ADMIN TOOLS (Dynamic)"
+                    const registryContent = `\n\n${toolRegistryHeader}\n\n` +
+                        filteredTools.map(t => `### ${t.function.name}\n- Description: ${t.function.description}\n- Skill invocation: Use the tool name directly as a command: \`${t.function.name}\`. Example: \`${t.function.name}(${Object.keys(t.function.parameters.properties).map(k => `${k}="..."`).join(", ")})\`.`).join("\n\n")
+
+                    if (toolsMd.includes(toolRegistryHeader)) {
+                        toolsMd = toolsMd.split(toolRegistryHeader)[0] + registryContent
+                    } else {
+                        toolsMd += registryContent
+                    }
+                    fs.writeFileSync(openclawToolsPath, toolsMd, "utf8")
+                }
+            } catch (err) {
+                logger.warn({ err: err.message }, "OpenClaw: failed to update TOOLS.md")
+            }
+        }
+
         let finalTask = task
-        if (!options.noContext) {
+        const toolsDesc = filteredTools.map(t => `- ${t.function.name}: ${t.function.description}`).join("\n")
+
+        if (hasNativeMessages) {
+            finalTask = renderMessagesForOpenClaw(options.messages)
+            logger.info({ flow: executionFlow, messages: options.messages.length }, "OpenClaw: using native flow messages")
+        } else if (!options.noContext) {
             // Admin flow: provide DB context and schema to OpenClaw
             try {
                 const { buildDbContext, getDbSchema, selectRelevantTables } = require("./admin")
@@ -1143,6 +1280,24 @@ DATABASE SCHEMA:
 ${schema}
 ${notes ? `\nDATA MODEL NOTES:\n${notes}` : ""}
 
+AVAILABLE TOOLS:
+${toolsDesc}
+
+SYSTEM INSTRUCTIONS:
+- You are an admin agent with direct access to the database and server via the tools listed above.
+- If a tool is listed under "AVAILABLE TOOLS", you MUST use it directly to fulfill the request.
+- Do NOT refuse access or claim you lack tools if they are listed in the AVAILABLE TOOLS block.
+- Examples of tool calls:
+  - query_db(sql="SELECT * FROM users")
+  - run_shell(command="pm2 status")
+- If a tool name doesn't work, use it with the 'skill_call' syntax:
+  - skill_call(skill="query_db", args={"sql": "SELECT * FROM users"})
+- Use 'query_db' for any data retrieval. It is a native tool you can call.
+- One customer might have multiple active subscriptions (e.g., for different meal types). Sum them all unless asked otherwise.
+- JOIN 'subscriptions' and 'subscription_deliveries' to get the most accurate, live count of delivered meals.
+- Use 'LIKE %name%' for customer searches to be robust against name variations.
+- If you cannot find a tool, check your 'Skills' or use the command format directly.
+
 ADMIN TASK:
 ${task}`
                 const beforeLen = task.length
@@ -1151,11 +1306,29 @@ ${task}`
             } catch (err) {
                 logger.warn({ err: err.message }, "OpenClaw: failed to build context, sending raw task")
             }
+        } else {
+            // Even if noContext is true (explicit agent call), we must tell OpenClaw what it can do
+            finalTask = `AVAILABLE TOOLS:
+${toolsDesc}
+
+SYSTEM INSTRUCTIONS:
+- You are an admin agent with direct access to the database and server via the tools listed above.
+- If a tool is listed under "AVAILABLE TOOLS", you MUST use it directly to fulfill the request.
+- Do NOT refuse access or claim you lack tools if they are listed in the AVAILABLE TOOLS block.
+- Examples of tool calls:
+  - query_db(sql="SELECT * FROM users")
+  - run_shell(command="pm2 status")
+- If a tool name doesn't work, use it with the 'skill_call' syntax:
+  - skill_call(skill="query_db", args={"sql": "SELECT * FROM users"})
+- Use 'query_db' for any data retrieval. It is a native tool you can call.
+
+ADMIN TASK:
+${task}`
         }
 
         const args = [
             "agent",
-            "--agent", "main",
+            "--agent", openclawAgent,
             "-m", finalTask,
             "--json",
             "--timeout", String(timeout),
@@ -1166,7 +1339,7 @@ ${task}`
             logger.info("Admin: 'noContext' requested, but OpenClaw CLI does not support '--no-context'. Skipping flag.")
         }
 
-        logger.info({ task, backend: "openclaw", noContext: !!options.noContext }, "admin: forwarding to OpenClaw")
+        logger.info({ task, backend: "openclaw", flow: executionFlow, noContext: !!options.noContext, nativeMessages: hasNativeMessages }, "openclaw: forwarding")
         const child = exec(`openclaw ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
             timeout: (timeout + 10) * 1000,
             env: { ...process.env },
@@ -1179,6 +1352,14 @@ ${task}`
             try {
                 const result = JSON.parse(stdout)
                 const payloads = result.result?.payloads || []
+                
+                // If OpenClaw output contains tool calls in its own format, we might need to bridge them
+                // but usually it should just return text if it doesn't have a native integration.
+                // However, our task description now tells it tools exist. 
+                // If OpenClaw tries to call a tool by printing something like 'TOOL: query_db {"sql": "... "}'
+                // we would need a wrapper. 
+                // BUT, OpenClaw CLI's "agent" mode is a full turn that usually returns a final answer.
+                
                 const text = payloads.map(p => p.text).filter(Boolean).join("\n")
                 const model = result.result?.meta?.agentMeta?.model || "unknown"
                 const duration = result.result?.meta?.durationMs || 0
@@ -1194,9 +1375,60 @@ ${task}`
 
 async function dispatchAgentTask(task, options = {}) {
     const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
-    const backend = cfg.admin?.agent_backend || "local"
-    if (backend === "openclaw") return runOpenClawAgent(task, options)
+    const backend = options.backend || cfg.admin?.agent_backend || "local"
+    const isExplicitAgentFlow = options.flow === "agent"
+
+    // Explicit `agent` commands need the local tool loop because it is the only
+    // path that actually executes mac/browser/db tools today.
+    if (isExplicitAgentFlow && !options._backend_redirect) {
+        logger.info({ task, flow: options.flow, backend }, "adminAgent: using local tool loop for explicit agent flow")
+        return runAgentLoop(task, options)
+    }
+
+    if (backend === "openclaw" || backend === "myclaw" || backend === "nemoclaw") {
+        return runOpenClawAgent(task, { ...options, backend })
+    }
+    if (backend && backend !== "direct" && backend !== "local") {
+        const BackendAdapter = require("../providers/adapters/backend")
+        const adapter = new BackendAdapter({
+            ...cfg.agent,
+            backend,
+            endpoint: options.endpoint || cfg.agent?.endpoint,
+        })
+        return await adapter.complete(task, { ...options, _backend_redirect: true })
+    }
     return runAgentLoop(task, options)
 }
 
-module.exports = { runAgentLoop, runOpenClawAgent, dispatchAgentTask }
+async function clearOpenClawSessions() {
+    const agents = ["admin", "agent"]
+    for (const agent of agents) {
+        await new Promise((resolve) => {
+            const sessionsDir = path.resolve(process.env.HOME, `.openclaw/agents/${agent}/sessions`)
+            if (!fs.existsSync(sessionsDir)) return resolve()
+            
+            fs.readdir(sessionsDir, (err, files) => {
+                if (err) {
+                    logger.error({ agent, err: err.message }, "Admin: failed to list OpenClaw sessions for cleanup")
+                    return resolve()
+                }
+                
+                let deleted = 0
+                for (const file of files) {
+                    if (file.endsWith(".jsonl") || file === "sessions.json") {
+                        try {
+                            fs.unlinkSync(path.join(sessionsDir, file))
+                            deleted++
+                        } catch (e) {
+                            logger.warn({ agent, file, err: e.message }, "Admin: failed to delete OpenClaw session file")
+                        }
+                    }
+                }
+                if (deleted > 0) logger.info({ agent, deleted }, "Admin: cleared OpenClaw sessions due to tool change")
+                resolve()
+            })
+        })
+    }
+}
+
+module.exports = { runAgentLoop, runOpenClawAgent, dispatchAgentTask, clearOpenClawSessions }
