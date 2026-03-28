@@ -105,6 +105,8 @@ async function executeCustomerFlow(options) {
     const customerExecutionCfg = getCustomerExecutionConfig(customerFlowCfg)
     const activeSession = cartStore.get(phone)
     const activeSupport = cartStore.get(`support:${phone}`)
+    const backendEnabled = !!(customerFlowCfg?.backend && customerFlowCfg.backend !== "direct")
+    const canUseConversationalBackend = backendEnabled && !!customerExecutionCfg?.backendCapabilities?.conversational
 
     if (activeSession && activeSession.state === "support_handoff") {
         cartStore.clear(phone)
@@ -168,6 +170,26 @@ async function executeCustomerFlow(options) {
         stateContext: turn.statefulResolution,
     })
     if (!preRoutePolicy.allowed) {
+        if (preRoutePolicy.reason === "out_of_domain" && canUseConversationalBackend) {
+            const response = await answerViaConfiguredMode({
+                resolvedRequest: turn.resolvedRequest,
+                phone,
+                routedIntent: { intent: "general_chat", filter: {} },
+                conversationState: turn.conversationState,
+                policyContext: {
+                    blockedReason: preRoutePolicy.reason,
+                },
+            })
+            return {
+                response,
+                route: "customer_backend",
+                turn,
+                routedIntent: { intent: "general_chat", filter: {} },
+                policy: preRoutePolicy,
+                executionPlan: { mode: "backend", reason: "customer_policy_guided_backend", intent: "general_chat" },
+                executionConfig: customerExecutionCfg,
+            }
+        }
         const plannerDecision = await planCustomerTurn({
             message: turn.effectiveMessage,
             conversationState: turn.conversationState,
@@ -204,6 +226,27 @@ async function executeCustomerFlow(options) {
         domainPack,
     })
     if (!resolvedPolicy.allowed) {
+        if ((resolvedPolicy.reason === "unknown_intent" || resolvedPolicy.reason === "not_in_allowlist") && canUseConversationalBackend) {
+            const response = await answerViaConfiguredMode({
+                resolvedRequest: turn.resolvedRequest,
+                phone,
+                routedIntent: { intent: "general_chat", filter: {} },
+                conversationState: turn.conversationState,
+                policyContext: {
+                    blockedReason: resolvedPolicy.reason,
+                    routedIntent: routedIntent.intent,
+                },
+            })
+            return {
+                response,
+                route: "customer_backend",
+                turn,
+                routedIntent: { intent: "general_chat", filter: {} },
+                policy: resolvedPolicy,
+                executionPlan: { mode: "backend", reason: "customer_resolved_policy_guided_backend", intent: "general_chat" },
+                executionConfig: customerExecutionCfg,
+            }
+        }
         logger.info({ phone, reason: resolvedPolicy.reason, intent: routedIntent.intent }, "chain: customer resolved policy blocked")
         return { response: resolvedPolicy.response, route: "policy_blocked", turn, routedIntent, policy: resolvedPolicy, executionConfig: customerExecutionCfg }
     }

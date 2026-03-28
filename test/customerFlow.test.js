@@ -158,7 +158,7 @@ async function main() {
 
     {
         const { customerFlow } = loadCustomerFlowWithStubs({
-            flowConfig: { backend: "openclaw" },
+            flowConfig: { backend: "direct" },
             preRoutePolicy: { allowed: false, reason: "out_of_domain", response: "OOD" },
             plannerResult: {
                 mode: "respond",
@@ -393,6 +393,7 @@ async function main() {
         })
         let executed = 0
         let backendCalls = 0
+        let backendPayload = null
         const result = await customerFlow.executeCustomerFlow({
             message: "tell me the capital of france please",
             phone: "p3b",
@@ -404,17 +405,55 @@ async function main() {
                 executed++
                 return "tool-response"
             },
-            async answerViaConfiguredMode() {
+            async answerViaConfiguredMode(payload) {
                 backendCalls++
+                backendPayload = payload
                 return "backend-response"
             },
         })
 
-        assert("pre-route policy can block before backend/tool execution", [
-            ["policy route chosen", result.route === "policy_blocked"],
-            ["response preserved", result.response === "OOD"],
+        assert("pre-route out-of-domain turns can be delegated to backend guidance", [
+            ["backend route chosen", result.route === "customer_backend"],
+            ["response preserved", result.response === "backend-response"],
             ["tool executor not invoked", executed === 0],
-            ["backend not invoked", backendCalls === 0],
+            ["backend invoked once", backendCalls === 1],
+            ["policy context forwarded", backendPayload && backendPayload.policyContext && backendPayload.policyContext.blockedReason === "out_of_domain"],
+        ])
+    }
+
+    {
+        const { customerFlow } = loadCustomerFlowWithStubs({
+            flowConfig: { backend: "openclaw" },
+            routedIntent: { intent: "unknown", filter: {} },
+            resolvedPolicy: { allowed: false, reason: "unknown_intent", response: "OOD" },
+        })
+        let executed = 0
+        let backendCalls = 0
+        let backendPayload = null
+        const result = await customerFlow.executeCustomerFlow({
+            message: "say something witty",
+            phone: "p3c",
+            manifest: { agent: { out_of_domain_message: "OOD" }, intents: { general_chat: {} } },
+            domainPack: null,
+            sessionRouting: {},
+            conversationState: {},
+            async executeIntent() {
+                executed++
+                return "tool-response"
+            },
+            async answerViaConfiguredMode(payload) {
+                backendCalls++
+                backendPayload = payload
+                return "backend-response"
+            },
+        })
+
+        assert("resolved policy conversational blocks can also use backend guidance", [
+            ["backend route chosen", result.route === "customer_backend"],
+            ["response preserved", result.response === "backend-response"],
+            ["tool executor not invoked", executed === 0],
+            ["backend invoked once", backendCalls === 1],
+            ["resolved policy reason forwarded", backendPayload && backendPayload.policyContext && backendPayload.policyContext.blockedReason === "unknown_intent"],
         ])
     }
 

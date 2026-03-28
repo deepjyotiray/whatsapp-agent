@@ -18,6 +18,8 @@ class BackendAdapter extends BaseAdapter {
             phone: options.phone,
             backend: this.config.backend || this.config.backend_type || 'openclaw',
             endpoint: this.config.endpoint || this.config.base_url,
+            backend_config: this.config.backend_config || {},
+            timeout: this.config.backend_config?.timeout || options.timeout,
             flow: options.flow,
             _backend_redirect: options._backend_redirect,
             messages,

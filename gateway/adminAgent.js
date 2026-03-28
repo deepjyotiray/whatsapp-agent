@@ -1203,7 +1203,9 @@ async function runOpenClawAgent(task, options = {}) {
         const executionFlow = options.flow || flow || "agent"
         const openclawAgent = executionFlow === "admin" ? "admin" : "agent"
         const workspaceId = options.workspaceId || getActiveWorkspace()
-        const timeout = Number(options.timeout || 90)
+        const backendConfig = options.backend_config || {}
+        const timeout = Number(options.timeout || backendConfig.timeout || 90)
+        const cliCommand = String(options.command || backendConfig.command || "openclaw").trim() || "openclaw"
         
         const hasNativeMessages = Array.isArray(options.messages) && options.messages.length > 0
 
@@ -1327,8 +1329,8 @@ ${task}`
             logger.info("Admin: 'noContext' requested, but OpenClaw CLI does not support '--no-context'. Skipping flag.")
         }
 
-        logger.info({ task, backend: "openclaw", flow: executionFlow, noContext: !!options.noContext, nativeMessages: hasNativeMessages }, "openclaw: forwarding")
-        const child = exec(`openclaw ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
+        logger.info({ task, backend: "openclaw", flow: executionFlow, cliCommand, noContext: !!options.noContext, nativeMessages: hasNativeMessages }, "openclaw: forwarding")
+        const child = exec(`${cliCommand} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
             timeout: (timeout + 10) * 1000,
             env: { ...process.env },
         }, (err, stdout, stderr) => {
@@ -1367,16 +1369,18 @@ async function dispatchAgentTask(task, options = {}) {
         ? llm.getFlowConfig(options.flow || "agent")
         : {}
     const backend = options.backend || resolved.backend || "local"
+    const backendConfig = options.backend_config || resolved.backend_config || {}
 
     if (backend === "openclaw" || backend === "myclaw" || backend === "nemoclaw") {
-        return runOpenClawAgent(task, { ...options, backend })
+        return runOpenClawAgent(task, { ...options, backend, backend_config: backendConfig, endpoint: options.endpoint || resolved.endpoint })
     }
     if (backend && backend !== "direct" && backend !== "local") {
         const BackendAdapter = require("../providers/adapters/backend")
         const adapter = new BackendAdapter({
             ...cfg.agent,
             backend,
-            endpoint: options.endpoint || cfg.agent?.endpoint,
+            endpoint: options.endpoint || resolved.endpoint || cfg.agent?.endpoint,
+            backend_config: backendConfig,
         })
         return await adapter.complete(task, { ...options, _backend_redirect: true })
     }

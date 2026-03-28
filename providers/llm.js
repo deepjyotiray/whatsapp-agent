@@ -36,6 +36,8 @@ function getFlowConfig(flowName = "customer") {
         ...baseLlm,
         ...llm,
         backend: cfg.backend || settings[flowName]?.backend || (flowName === "agent" ? settings.admin?.agent_backend : undefined) || "direct",
+        endpoint: cfg.endpoint || llm.endpoint || llm.base_url || llm.url || "",
+        backend_config: cfg.backend_config || {},
         tools: cfg.tools || (flowName === "admin" ? settings.admin?.tools : (flowName === "agent" ? settings.admin?.agent_tools : undefined)) || [],
         execution: flowName === "customer" ? normalizeCustomerExecutionConfig(cfg.execution || {}) : (cfg.execution || {}),
     }

@@ -11,10 +11,11 @@ var _customerBackendPresets = [];
 function $(id) { return document.getElementById(id) }
 
 function ensureFlow(flow) {
-  if (!_flowConfigs[flow]) _flowConfigs[flow] = { llm: {}, backend: "direct", tools: [], auth: {}, execution: {} };
+  if (!_flowConfigs[flow]) _flowConfigs[flow] = { llm: {}, backend: "direct", tools: [], auth: {}, execution: {}, backend_config: {} };
   if (!_flowConfigs[flow].llm) _flowConfigs[flow].llm = {};
   if (!_flowConfigs[flow].auth) _flowConfigs[flow].auth = {};
   if (!_flowConfigs[flow].execution) _flowConfigs[flow].execution = {};
+  if (!_flowConfigs[flow].backend_config) _flowConfigs[flow].backend_config = {};
   return _flowConfigs[flow];
 }
 
@@ -43,6 +44,9 @@ function syncCurrentFlowFromInputs() {
   var backendEl = $("backend-" + flow);
   var apiKeyEl = $("api-key-" + flow);
   var baseUrlEl = $("base-url-" + flow);
+  var backendEndpointEl = $("backend-endpoint-" + flow);
+  var backendCommandEl = $("backend-command-" + flow);
+  var backendTimeoutEl = $("backend-timeout-" + flow);
   var keywordEl = $("keyword-" + flow);
   var pinEl = $("pin-" + flow);
   var allowedNumbersEl = $("allowed-numbers-" + flow);
@@ -63,6 +67,10 @@ function syncCurrentFlowFromInputs() {
   if (modelEl && !modelEl.disabled) cfg.llm.model = modelEl.value || "";
   if (apiKeyEl && !apiKeyEl.disabled) cfg.llm.api_key = apiKeyEl.value || "";
   if (baseUrlEl && !baseUrlEl.disabled) cfg.llm.base_url = baseUrlEl.value || "";
+  if (backendEndpointEl) cfg.endpoint = backendEndpointEl.value || "";
+  if (!cfg.backend_config) cfg.backend_config = {};
+  if (backendCommandEl) cfg.backend_config.command = backendCommandEl.value || "";
+  if (backendTimeoutEl) cfg.backend_config.timeout = parseInt(backendTimeoutEl.value || "90", 10);
   if (strategyEl) cfg.execution.strategy = strategyEl.value || "auto";
   if (toolIntentsEl) {
     cfg.execution.tool_intents = toolIntentsEl.value
@@ -133,6 +141,7 @@ function renderFlowEditor() {
   var execution = cfg.execution || {};
   var backendCapabilities = execution.backend_capabilities || {};
   var responsePolicy = execution.response_policy || {};
+  var backendConfig = cfg.backend_config || {};
   
   // Ensure backend has a default if missing entirely
   var backend = cfg.backend || "direct";
@@ -202,6 +211,25 @@ function renderFlowEditor() {
         <label class="field" style="grid-column: 1 / -1"><span style="font-size: 0.75rem; color: var(--muted); text-transform: uppercase;">Disallowed Backend Response Patterns</span>
           <textarea id="response-patterns-${flowName}" oninput="syncCurrentFlowFromInputs()" style="margin-top: 4px; min-height: 72px;" placeholder="internal policy, system prompt">${(responsePolicy.disallow_patterns || []).join("\n")}</textarea>
         </label>
+      </div>
+    </div>
+    ` : ''}
+    ${mode === 'backend' ? `
+    <div style="margin:0 0 12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-2)">
+      <div style="font-size: 0.75rem; color: var(--muted); text-transform: uppercase; margin-bottom:8px;">Backend Service Configuration</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+        <label class="field"><span style="font-size: 0.75rem; color: var(--muted); text-transform: uppercase;">Backend Endpoint</span>
+          <input type="text" id="backend-endpoint-${flowName}" value="${cfg.endpoint || llm.endpoint || llm.base_url || ''}" oninput="syncCurrentFlowFromInputs()" placeholder="Optional: remote backend URL" style="margin-top: 4px;">
+        </label>
+        <label class="field"><span style="font-size: 0.75rem; color: var(--muted); text-transform: uppercase;">CLI Command</span>
+          <input type="text" id="backend-command-${flowName}" value="${backendConfig.command || 'openclaw'}" oninput="syncCurrentFlowFromInputs()" placeholder="openclaw" style="margin-top: 4px;">
+        </label>
+        <label class="field"><span style="font-size: 0.75rem; color: var(--muted); text-transform: uppercase;">Timeout (seconds)</span>
+          <input type="number" id="backend-timeout-${flowName}" value="${backendConfig.timeout || 90}" min="10" max="600" oninput="syncCurrentFlowFromInputs()" style="margin-top: 4px;">
+        </label>
+      </div>
+      <div style="margin-top:6px;font-size:0.78rem;color:var(--muted)">
+        For OpenClaw/MyClaw/NemoClaw, the runtime currently executes the local CLI command. Set the command here if the binary name or path is different on this machine.
       </div>
     </div>
     ` : ''}

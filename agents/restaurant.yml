@@ -4,7 +4,7 @@ agent:
   version: "2.0.0"
   description: "Healthy Meal Spot — WhatsApp assistant"
   error_message: "Something went wrong. Please try again."
-  out_of_domain_message: "I can still help in a Healthy Meal Spot way. Ask me about dishes, prices, ordering, support, or even what sounds good to eat today."
+  out_of_domain_message: "I couldn't confidently answer that just now. I can still help with Healthy Meal Spot menu questions, orders, and support."
 
 intent_hints:
   greet: "customer says hi, hello, thanks, bye, or starts a casual conversation"

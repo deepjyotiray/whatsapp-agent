@@ -35,7 +35,7 @@ async function loadCustomerRagHints(message, dbPath) {
     }
 }
 
-async function answerCustomerViaConfiguredMode(resolvedRequest, phone, manifest, routedIntent = {}, conversationStateOverride = null) {
+async function answerCustomerViaConfiguredMode(resolvedRequest, phone, manifest, routedIntent = {}, conversationStateOverride = null, policyContext = null) {
     const message = resolvedRequest.effectiveMessage || resolvedRequest.originalMessage || ""
     const workspaceId = getActiveWorkspace()
     const flowCfg = getFlowConfig("customer")
@@ -85,6 +85,7 @@ async function answerCustomerViaConfiguredMode(resolvedRequest, phone, manifest,
         schema,
         notes,
         ragHints,
+        policyContext,
     })
     logger.info({ phone, intent, lightContext: useLightContext, messageCount: messages.length }, "perf: customer backend request prepared")
     const llmStart = Date.now()
@@ -164,8 +165,8 @@ class AgentChain {
                 executeIntent: ({ intent, effectiveMessage, resolvedMeta, resolvedRequest, originalMessage, conversationState: activeTurnState }) => {
                     return this._executeAndStore(intent, { phone, rawMessage: effectiveMessage, resolvedMeta, resolvedRequest, conversationState: activeTurnState }, originalMessage, phone)
                 },
-                answerViaConfiguredMode: async ({ resolvedRequest, routedIntent, conversationState: activeTurnState }) => {
-                    return await answerCustomerViaConfiguredMode(resolvedRequest, phone, this._manifest, routedIntent, activeTurnState)
+                answerViaConfiguredMode: async ({ resolvedRequest, routedIntent, conversationState: activeTurnState, policyContext }) => {
+                    return await answerCustomerViaConfiguredMode(resolvedRequest, phone, this._manifest, routedIntent, activeTurnState, policyContext)
                 },
             })
 
@@ -238,11 +239,6 @@ class AgentChain {
                     })
                 }
                 return outcome.response
-            }
-
-            const { isInDomain } = require("../gateway/policyEngine")
-            if (!isInDomain(message, getActiveWorkspace())) {
-                return this._manifest.agent.out_of_domain_message || "I can only help with business-related questions."
             }
 
             return this._manifest.agent.error_message || "I'm sorry, I couldn't process that. How else can I help?"

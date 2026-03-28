@@ -87,6 +87,7 @@ function buildCustomerBackendMessages({
     schema,
     notes,
     ragHints,
+    policyContext,
 }) {
     const businessName = profile.businessName || manifest.agent?.name || "the business"
     const projectedCustomerProfile = projectCustomerProfileForTurn(
@@ -100,10 +101,19 @@ function buildCustomerBackendMessages({
             .map(([key, value]) => `- ${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
             .join("\n")
         : ""
+    const policyBlock = policyContext?.blockedReason
+        ? `\nPolicy context:
+- The customer message was flagged before normal business routing with reason: ${policyContext.blockedReason}.
+- The routed intent at the time of the block was: ${policyContext.routedIntent || "general_chat"}.
+- Decide the reply yourself.
+- If the message is harmless conversational small talk, you may answer briefly and naturally.
+- If it is broad or unrelated, decline gently and redirect to what the business can help with.
+- Do not claim business capabilities that are not grounded in the provided context.`
+        : ""
     const systemContext = `You are the customer-facing assistant for ${businessName}.
 Answer using the provided business profile, database context, schema, notes, retrieval hints, and recent conversation history.
 If the configured mode is a backend service, keep this request on that backend path.
-Be concise, accurate, and helpful for a WhatsApp customer.`
+Be concise, accurate, and helpful for a WhatsApp customer.${policyBlock}`
     const dynamicContext = [
         customerProfileSummary ? `=== CUSTOMER PROFILE MEMORY ===\n${customerProfileSummary}` : "",
         "=== DATABASE CONTEXT ===",

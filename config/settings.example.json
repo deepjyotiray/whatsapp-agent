@@ -33,6 +33,10 @@
         "model": "gpt-4o-mini",
         "api_key": "sk-your-openai-key-here"
       },
+      "backend_config": {
+        "command": "openclaw",
+        "timeout": 90
+      },
       "execution": {
         "strategy": "auto",
         "tool_intents": ["support", "place_order"],
