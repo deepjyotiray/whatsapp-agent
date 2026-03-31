@@ -37,11 +37,17 @@ const { summarizeCustomerLog } = require("../runtime/customerObservability")
 const PORT   = settings.transports?.http?.port || 3010
 const SECRET = settings.api.secret
 const PUBLIC_DIR = path.resolve(__dirname, "../public")
-const SETUP_USER = "linkedin"
-const SETUP_PASS = "community"
-const SETUP_HOSTS = (process.env.SETUP_HOST || "localhost").split(",").map(h => h.trim().toLowerCase())
+const setupConfig = settings.setup || {}
+const SETUP_USER = process.env.SETUP_USER || setupConfig.username || "linkedin"
+const SETUP_PASS = process.env.SETUP_PASS || setupConfig.password || "community"
+const SETUP_HOSTS = String(process.env.SETUP_HOST || setupConfig.hosts || "localhost").split(",").map(h => h.trim().toLowerCase()).filter(Boolean)
 const SETUP_COOKIE = "secureai_session"
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12
+const SETUP_BRAND = process.env.SETUP_BRAND || setupConfig.brand || "SecureAI"
+const SETUP_LOGIN_TITLE = process.env.SETUP_LOGIN_TITLE || setupConfig.login_title || "Enter the agent workspace."
+const SETUP_LOGIN_LEDE = process.env.SETUP_LOGIN_LEDE || setupConfig.login_lede || "Use the branded entry screen to reach your business agent console."
+const SETUP_LOGIN_SUBMIT = process.env.SETUP_LOGIN_SUBMIT || setupConfig.login_submit || "Continue"
+const OPENCLAW_HOME = path.resolve(process.env.HOME || "", ".openclaw")
 
 function readBody(req) {
     return new Promise((resolve, reject) => {
@@ -112,6 +118,11 @@ function unauthorizedSetup(res) {
     sendJson(res, 401, { error: "setup_auth_required" })
 }
 
+function cookieSecureFlag(req) {
+    const forwardedProto = String(req.headers["x-forwarded-proto"] || "").toLowerCase()
+    return forwardedProto === "https" || hostName(req) === "localhost"
+}
+
 function parseCookies(req) {
     const header = String(req.headers.cookie || "")
     return Object.fromEntries(
@@ -126,9 +137,10 @@ function parseCookies(req) {
     )
 }
 
-function createSessionToken() {
+function createSessionToken(identity = SETUP_USER) {
     const expiresAt = Date.now() + SESSION_TTL_MS
-    const payload = `${SETUP_USER}:${expiresAt}`
+    const safeIdentity = String(identity || SETUP_USER).trim().slice(0, 120) || SETUP_USER
+    const payload = `${safeIdentity}:${expiresAt}`
     const signature = crypto.createHmac("sha256", SECRET).update(payload).digest("hex")
     return Buffer.from(`${payload}:${signature}`).toString("base64url")
 }
@@ -146,19 +158,20 @@ function isSetupAuthorized(req) {
         const expiresAt = Number(expiresAtRaw)
         if (!username || !Number.isFinite(expiresAt)) return false
         if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false
-        return username === SETUP_USER && expiresAt > Date.now()
+        return !!username && expiresAt > Date.now()
     } catch {
         return false
     }
 }
 
 function clearSession(res) {
-    res.setHeader("Set-Cookie", `${SETUP_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`)
+    res.setHeader("Set-Cookie", `${SETUP_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`)
 }
 
-function setSession(res) {
-    const token = createSessionToken()
-    res.setHeader("Set-Cookie", `${SETUP_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`)
+function setSession(req, res, identity) {
+    const token = createSessionToken(identity)
+    const secure = cookieSecureFlag(req) ? "; Secure" : ""
+    res.setHeader("Set-Cookie", `${SETUP_COOKIE}=${token}; Path=/; HttpOnly${secure}; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`)
 }
 
 function hostName(req) {
@@ -173,6 +186,175 @@ function getWorkspaceFromReq(req, fallback = getActiveWorkspace()) {
     return requestUrl(req).searchParams.get("workspace") || fallback
 }
 
+function safeReadJson(filePath, fallback = null) {
+    try {
+        if (!fs.existsSync(filePath)) return fallback
+        return JSON.parse(fs.readFileSync(filePath, "utf8"))
+    } catch {
+        return fallback
+    }
+}
+
+function readRecentFileLines(filePath, limit = 80) {
+    try {
+        if (!fs.existsSync(filePath)) return []
+        const lines = fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/).filter(Boolean)
+        return lines.slice(-limit)
+    } catch {
+        return []
+    }
+}
+
+function getOpenClawSessionMap(agentId = "agent") {
+    return safeReadJson(path.join(OPENCLAW_HOME, "agents", agentId, "sessions", "sessions.json"), {}) || {}
+}
+
+function listOpenClawSessions(agentId = "agent") {
+    const sessions = getOpenClawSessionMap(agentId)
+    return Object.entries(sessions)
+        .map(([sessionKey, meta]) => ({
+            sessionKey,
+            sessionId: meta.sessionId || "",
+            updatedAt: meta.updatedAt || 0,
+            status: meta.status || "unknown",
+            model: meta.model || meta.modelId || "",
+            provider: meta.modelProvider || "",
+            sessionFile: meta.sessionFile || path.join(OPENCLAW_HOME, "agents", agentId, "sessions", `${meta.sessionId}.jsonl`),
+        }))
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+}
+
+function readOpenClawSessionHistory(agentId = "agent", sessionKey = "agent:agent:main", limit = 120) {
+    const sessions = getOpenClawSessionMap(agentId)
+    const meta = sessions[sessionKey]
+    if (!meta) return { sessionKey, found: false, messages: [] }
+    const sessionFile = meta.sessionFile || path.join(OPENCLAW_HOME, "agents", agentId, "sessions", `${meta.sessionId}.jsonl`)
+    const lines = readRecentFileLines(sessionFile, Math.max(limit * 3, 200))
+    const parsed = []
+    for (const line of lines) {
+        try {
+            parsed.push(JSON.parse(line))
+        } catch {}
+    }
+    const messages = parsed
+        .filter(entry => entry.type === "message" && entry.message)
+        .map(entry => {
+            const role = entry.message.role || "unknown"
+            const content = Array.isArray(entry.message.content)
+                ? entry.message.content
+                    .filter(part => part && (part.type === "text" || part.type === "input_text" || part.type === "output_text"))
+                    .map(part => String(part.text || "").trim())
+                    .filter(Boolean)
+                    .join("\n\n")
+                : String(entry.message.content || "").trim()
+            return {
+                id: entry.id || "",
+                timestamp: entry.timestamp || entry.message.timestamp || "",
+                role,
+                content,
+                provider: entry.message.provider || "",
+                model: entry.message.model || "",
+            }
+        })
+        .filter(msg => msg.content)
+        .slice(-limit)
+    return {
+        sessionKey,
+        found: true,
+        sessionId: meta.sessionId || "",
+        updatedAt: meta.updatedAt || 0,
+        model: meta.model || "",
+        provider: meta.modelProvider || "",
+        messages,
+    }
+}
+
+function getOpenClawSummary() {
+    const openclawConfig = safeReadJson(path.join(OPENCLAW_HOME, "openclaw.json"), {}) || {}
+    const studioConfig = safeReadJson(path.join(OPENCLAW_HOME, "openclaw-studio", "settings.json"), {}) || {}
+    const pairedDevices = safeReadJson(path.join(OPENCLAW_HOME, "devices", "paired.json"), {}) || {}
+    const pendingDevices = safeReadJson(path.join(OPENCLAW_HOME, "devices", "pending.json"), {}) || {}
+    const approvals = safeReadJson(path.join(OPENCLAW_HOME, "exec-approvals.json"), {}) || {}
+    const agentModels = safeReadJson(path.join(OPENCLAW_HOME, "agents", "agent", "models.json"), {}) || {}
+    const adminModels = safeReadJson(path.join(OPENCLAW_HOME, "agents", "admin", "models.json"), {}) || {}
+    const agentAuthProfiles = safeReadJson(path.join(OPENCLAW_HOME, "agents", "agent", "auth-profiles.json"), {}) || {}
+    const cronJobs = safeReadJson(path.join(OPENCLAW_HOME, "cron", "jobs.json"), {}) || {}
+    const gatewayLog = readRecentFileLines(path.join(OPENCLAW_HOME, "logs", "gateway.log"), 40)
+    const agentSessions = listOpenClawSessions("agent")
+    const adminSessions = listOpenClawSessions("admin")
+
+    const deviceRows = Object.values(pairedDevices).map(device => ({
+        clientId: device.clientId || "unknown",
+        clientMode: device.clientMode || "unknown",
+        platform: device.platform || "unknown",
+        role: device.role || "unknown",
+        createdAtMs: device.createdAtMs || 0,
+        approvedAtMs: device.approvedAtMs || 0,
+    }))
+
+    return {
+        gateway: {
+            port: openclawConfig.gateway?.port || null,
+            mode: openclawConfig.gateway?.mode || "",
+            bind: openclawConfig.gateway?.bind || "",
+            authMode: openclawConfig.gateway?.auth?.mode || "",
+            controlUiOrigins: openclawConfig.gateway?.controlUi?.allowedOrigins || [],
+            localUrl: studioConfig.gateway?.url || "",
+            focused: studioConfig.focused || {},
+        },
+        agentIdentity: {
+            id: "agent",
+            workspace: openclawConfig.agents?.list?.find(agent => agent.id === "agent")?.workspace || "",
+            model: openclawConfig.agents?.list?.find(agent => agent.id === "agent")?.model || openclawConfig.agents?.defaults?.model?.primary || "",
+        },
+        sessions: {
+            agent: agentSessions,
+            admin: adminSessions,
+        },
+        devices: {
+            pairedCount: Object.keys(pairedDevices).length,
+            pendingCount: Object.keys(pendingDevices).length,
+            paired: deviceRows,
+        },
+        approvals: {
+            socketPath: approvals.socket?.path || "",
+            agentCount: Object.keys(approvals.agents || {}).length,
+        },
+        authProfiles: {
+            agentCount: Object.keys(agentAuthProfiles.profiles || {}).length,
+            lastGood: agentAuthProfiles.lastGood || {},
+        },
+        cron: {
+            jobCount: Array.isArray(cronJobs.jobs) ? cronJobs.jobs.length : 0,
+            jobs: Array.isArray(cronJobs.jobs) ? cronJobs.jobs : [],
+        },
+        models: {
+            agent: agentModels.providers || {},
+            admin: adminModels.providers || {},
+        },
+        logs: gatewayLog,
+    }
+}
+
+function getSetupAuthConfig() {
+    return {
+        mode: "password",
+        brand: SETUP_BRAND,
+        title: SETUP_LOGIN_TITLE,
+        lede: SETUP_LOGIN_LEDE,
+        submitLabel: SETUP_LOGIN_SUBMIT,
+        requiresPassword: true,
+        requiresUsername: true,
+    }
+}
+
+function redirectToLogin(req, res) {
+    const url = requestUrl(req)
+    const next = `${url.pathname}${url.search}`
+    res.writeHead(302, { Location: `/login?next=${encodeURIComponent(next)}` })
+    res.end()
+}
+
 const server = http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "application/json")
 
@@ -185,6 +367,7 @@ const server = http.createServer(async (req, res) => {
         "/": "dashboard.html",
         "/profile": "profile.html",
         "/chat": "chat.html",
+        "/agent-chat": "agent-chat.html",
         "/admin": "admin.html",
         "/tools": "tools.html",
         "/intercept": "intercept-v2.html",
@@ -198,6 +381,7 @@ const server = http.createServer(async (req, res) => {
     const isSetupPath = pathname.startsWith("/setup") || setupHost || PAGE_MAP[pathname] || pathname === "/login" || pathname.startsWith("/agent/") || pathname.startsWith("/governance")
     const loginAsset = req.method === "GET" && (
         pathname === "/login" ||
+        pathname === "/setup/auth/config" ||
         pathname === "/setup/styles.css" ||
         pathname === "/setup/login.js" ||
         pathname.startsWith("/setup/assets/")
@@ -206,7 +390,7 @@ const server = http.createServer(async (req, res) => {
     if (isSetupPath) {
         if (!loginAsset && !(req.method === "POST" && pathname === "/setup/login") && !isSetupAuthorized(req)) {
             if (req.method === "GET" && PAGE_MAP[pathname]) {
-                serveFile(res, path.join(PUBLIC_DIR, "setup", "login.html"))
+                redirectToLogin(req, res)
                 return
             }
             unauthorizedSetup(res)
@@ -216,6 +400,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname === "/login") {
         serveFile(res, path.join(PUBLIC_DIR, "setup", "login.html"))
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/auth/config") {
+        sendJson(res, 200, getSetupAuthConfig())
         return
     }
 
@@ -243,14 +432,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/setup/login") {
         try {
-            const { username, password } = await readBody(req)
+            const body = await readBody(req)
+            const username = String(body.username || "").trim()
+            const password = String(body.password || "")
             if (username !== SETUP_USER || password !== SETUP_PASS) {
                 clearSession(res)
                 sendJson(res, 401, { error: "invalid_credentials" })
                 return
             }
-            setSession(res)
-            sendJson(res, 200, { ok: true })
+            setSession(req, res, username)
+            sendJson(res, 200, { ok: true, next: String(body.next || "") })
         } catch (err) {
             logger.error({ err }, "setup login failed")
             sendJson(res, 500, { error: err.message })
@@ -675,6 +866,67 @@ const server = http.createServer(async (req, res) => {
         return
     }
 
+    if (req.method === "POST" && pathname === "/setup/agent-chat/run") {
+        try {
+            const { task, workspaceId, role } = await readBody(req)
+            if (!task) {
+                sendJson(res, 400, { error: "task required" })
+                return
+            }
+            const resolvedWorkspace = workspaceId || getActiveWorkspace()
+            const response = await handleAdmin(task, {
+                flow: "agent",
+                workspaceId: resolvedWorkspace,
+                role,
+                phone: `http-agent:${resolvedWorkspace}:${role || "super_admin"}`,
+            })
+            sendJson(res, 200, { ok: true, response, mode: "agent", workspaceId: resolvedWorkspace })
+        } catch (err) {
+            logger.error({ err }, "setup agent chat run failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/agent-chat/meta") {
+        try {
+            const workspaceId = getWorkspaceFromReq(req)
+            sendJson(res, 200, {
+                ok: true,
+                workspaceId,
+                approvalsList: listApprovals("", workspaceId),
+                ...getOpenClawSummary(),
+            })
+        } catch (err) {
+            logger.error({ err }, "setup agent chat meta failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/agent-chat/history") {
+        try {
+            const sessionKey = url.searchParams.get("sessionKey") || "agent:agent:main"
+            const history = readOpenClawSessionHistory("agent", sessionKey)
+            sendJson(res, 200, { ok: true, history })
+        } catch (err) {
+            logger.error({ err }, "setup agent chat history failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "POST" && pathname === "/setup/agent-chat/reset") {
+        try {
+            await clearOpenClawSessions()
+            sendJson(res, 200, { ok: true })
+        } catch (err) {
+            logger.error({ err }, "setup agent chat reset failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
     if (req.method === "POST" && pathname === "/setup/admin/image") {
         try {
             const { image, caption, workspaceId } = await readBody(req)
@@ -1003,7 +1255,9 @@ const server = http.createServer(async (req, res) => {
             const query = new URL(req.url, `http://${req.headers.host}`).searchParams
             const config = {
                 api_key: query.get("api_key"),
-                base_url: query.get("base_url")
+                base_url: query.get("base_url"),
+                endpoint: query.get("base_url"),
+                backend: query.get("backend"),
             }
             
             // Fallback to existing config if not provided in query
@@ -1430,6 +1684,10 @@ const server = http.createServer(async (req, res) => {
         return
     }
 
+    if (res.headersSent) {
+        logger.warn({ method: req.method, pathname }, "http transport: headers already sent before 404")
+        return
+    }
     sendJson(res, 404, { error: "not_found" })
 })
 
