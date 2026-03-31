@@ -34,7 +34,7 @@ const { normalizeCustomerExecutionConfig, validateCustomerExecutionConfig } = re
 const { listCustomerBackendPresets, getCustomerBackendPreset } = require("../runtime/customerBackendPresets")
 const { summarizeCustomerLog } = require("../runtime/customerObservability")
 
-const PORT   = settings.transports?.http?.port || 3010
+const PORT   = Number(process.env.HTTP_PORT) || settings.transports?.http?.port || 3010
 const SECRET = settings.api.secret
 const PUBLIC_DIR = path.resolve(__dirname, "../public")
 const setupConfig = settings.setup || {}
