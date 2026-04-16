@@ -1,47 +1,32 @@
 agent:
   name: restaurant-agent
   domain: food
-  version: "2.0.0"
+  version: "3.0.0"
   description: "Healthy Meal Spot — WhatsApp assistant"
   error_message: "Something went wrong. Please try again."
-  out_of_domain_message: "I couldn't confidently answer that just now. I can still help with Healthy Meal Spot menu questions, orders, and support."
+  out_of_domain_message: "For that, please visit healthymealspot.com — we can help with questions and support here."
 
 intent_hints:
   greet: "customer says hi, hello, thanks, bye, or starts a casual conversation"
-  general_chat: "customer asks a general question, recommendation, craving, weather, or small-talk that should still be answered in a business-aware way"
-  show_menu: "customer asks about menu items, dishes, availability, prices, veg or non-veg options, offers, calories, protein, fat, nutrition, healthy meals, low-calorie options, keto, diet, or any food filtering by nutritional value — this includes questions like 'meals under 400 calories', 'high protein dishes', or 'do you have coffee/tea/drinks'"
-  order_status: "customer asks about an existing order, payment, invoice, receipt, qr code, delivery status, eta, or resend"
-  place_order: "customer wants to buy, order, add to cart, checkout, or start placing an order"
-  support: "customer has a problem, complaint, refund request, wrong item, missing item, allergy issue, late delivery, or wants a human"
-  policy_info: "customer asks about refund policy, replacement, returns, cancellations, delivery areas, payment methods, or how to contact us"
+  faq: "customer asks a question about the business — hours, location, delivery areas, pickup, payment methods, website, contact, pricing, offerings, policies, or how something works"
+  support: "customer has a complaint, problem, food issue, wrong item, missing item, bad quality, late delivery, allergy concern, or wants to escalate an issue"
+  order_or_menu: "customer wants to see the menu, browse dishes, place an order, check order status, or do anything related to ordering"
 
 intents:
   greet:
     tool: concierge
     auth_required: false
 
-  general_chat:
+  faq:
     tool: concierge
     auth_required: false
 
-  show_menu:
-    tool: rag_menu
-    auth_required: false
-
-  order_status:
-    tool: order_lookup
-    auth_required: false
-
-  place_order:
-    tool: order_create
-    auth_required: false
-
   support:
-    tool: support_faq
+    tool: support_notify
     auth_required: false
 
-  policy_info:
-    tool: policy_info
+  order_or_menu:
+    tool: website_redirect
     auth_required: false
 
   unknown:
@@ -55,41 +40,16 @@ tools:
     cuisine: "home-style Indian food"
     tone: "warm, sharp, and naturally business-aware"
     greeting: "Welcome to Healthy Meal Spot!"
-    signature_line: |
-      Stay hungry, stay healthy! 🍛🌶️🥗🥘🍤🍚🍩
+    greeting_once: true
+    signature_line: "Stay hungry, stay healthy! 🍛"
+    signature_once: true
 
-      Healthy Meal Spot Concierge
-      To place orders visit healthymealspot.com or continue to chat on this number.
-    db_path: "./data/orders.db"
+  website_redirect:
+    type: website_redirect
+    website: "https://healthymealspot.com"
+    message: "To browse our menu and place orders, visit 👉 healthymealspot.com"
 
-  rag_menu:
-    type: menu_rag
-    db_path: "./data/orders.db"
-    system_prompt: |
-      You are a helpful assistant for Healthy Meal Spot.
-      Strictly answer using ONLY the provided menu data. Be concise and well formatted.
-      If the user asks for an item (like coffee, tea, beverages, etc.) and it is NOT explicitly listed in the menu data below with a price, you MUST say: "I'm sorry, we don't serve that right now." 
-      DO NOT say we have it if it's not in the data. DO NOT suggest it's available separately.
-      DO NOT include unrelated items like rice or bread when asked for beverages.
-      If nothing matches the specific request, say so clearly.
-
-  order_create:
-    type: order_create
-    db_path: "./data/orders.db"
-    backend_url: "http://localhost:3000"
-
-  order_lookup:
-    type: order_lookup
-    db_path: "./data/orders.db"
-    upi_handle: "9594614752@pthdfc"
-    website: "healthymealspot.com"
-    brand_label: "healthymealspot.com"
-    country_code: "91"
-
-  support_faq:
-    type: restaurant_support
-    db_path: "./data/orders.db"
+  support_notify:
+    type: support_notify
     escalation_phone: "+919594614752"
-
-  policy_info:
-    type: policy_rag
+    db_path: "./data/orders.db"

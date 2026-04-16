@@ -8,7 +8,7 @@
     "setup": "node setup/index.js",
     "promote": "node setup/promote.js",
     "seed": "node vector.js",
-    "test": "node test/menu.test.js && node test/agent.test.js && node test/customerFlow.test.js && node test/customerPolicy.test.js && node test/customerExecutionStrategy.test.js && node test/customerExecutionConfig.test.js && node test/customerPresetsObservability.test.js && node test/customerState.test.js && node test/customerContext.test.js && node test/orderSelection.test.js && node test/customerPlanner.test.js && node test/businessChatTool.test.js && node test/customerRouter.test.js && node test/customerRouteDecision.test.js && node test/restaurantSupport.test.js && node test/genericSupportTool.test.js && node test/customerProfileHydrator.test.js"
+    "test": "node test/menu.test.js && node test/agent.test.js && node test/customerFlow.test.js && node test/customerPolicy.test.js && node test/customerExecutionStrategy.test.js && node test/customerExecutionConfig.test.js && node test/customerPresetsObservability.test.js && node test/backendAdapter.test.js && node test/customerState.test.js && node test/customerContext.test.js && node test/orderSelection.test.js && node test/customerPlanner.test.js && node test/businessChatTool.test.js && node test/customerRouter.test.js && node test/customerRouteDecision.test.js && node test/restaurantSupport.test.js && node test/genericSupportTool.test.js && node test/customerProfileHydrator.test.js"
   },
   "keywords": [],
   "author": "",

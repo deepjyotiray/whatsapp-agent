@@ -1196,171 +1196,386 @@ function renderMessagesForOpenClaw(messages = []) {
         .join("\n\n")
 }
 
-async function runOpenClawAgent(task, options = {}) {
-    const flow = options.flow || "agent"
+function normalizeOpenClawAllowedToolNames(cfg, executionFlow) {
+    const rawNames = executionFlow === "agent" ? (cfg.admin?.agent_tools || []) : (cfg.admin?.tools || [])
+    const toolMap = { shell: "run_shell", db: "query_db", sql: "query_db" }
+    return rawNames.map(name => toolMap[name] || name)
+}
 
-    return new Promise(async (resolve) => {
-        const executionFlow = options.flow || flow || "agent"
-        const openclawAgent = executionFlow === "admin" ? "admin" : "agent"
-        const workspaceId = options.workspaceId || getActiveWorkspace()
-        const backendConfig = options.backend_config || {}
-        const timeout = Number(options.timeout || backendConfig.timeout || 90)
-        const cliCommand = String(options.command || backendConfig.command || "openclaw").trim() || "openclaw"
-        
-        const hasNativeMessages = Array.isArray(options.messages) && options.messages.length > 0
+function getFilteredOpenClawTools(workspaceId, executionFlow, cfg) {
+    let domainDefs = []
+    try {
+        const profile = loadProfile(workspaceId)
+        const pack = getPackForWorkspace(profile)
+        if (pack?.adminToolDefinitions?.length) domainDefs = pack.adminToolDefinitions
+    } catch {}
 
-        // Use tools from settings if available, otherwise fallback to CORE_TOOL_DEFINITIONS
-        const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
-        const allowedToolNames = executionFlow === "agent" ? (cfg.admin?.agent_tools || []) : (cfg.admin?.tools || [])
-        
-        // Map common tool names to their core implementation names
-        const toolMap = { "shell": "run_shell", "db": "query_db", "sql": "query_db" }
-        const normalizedAllowed = allowedToolNames.map(n => toolMap[n] || n)
-        
-        const filteredTools = normalizedAllowed.length > 0
-            ? CORE_TOOL_DEFINITIONS.filter(t => normalizedAllowed.includes(t.function.name))
-            : CORE_TOOL_DEFINITIONS
+    const allTools = [...CORE_TOOL_DEFINITIONS, ...domainDefs]
+    const allowed = normalizeOpenClawAllowedToolNames(cfg, executionFlow)
+    if (!allowed.length) return allTools
+    const filtered = allTools.filter(t => allowed.includes(t.function.name))
+    return filtered.length ? filtered : allTools
+}
 
-        if (!hasNativeMessages) {
-            // Inject tool implementations into TOOLS.md for OpenClaw's internal reference
-            try {
-                const openclawToolsPath = path.resolve(process.env.HOME, `.openclaw/${openclawAgent}_workspace/TOOLS.md`)
-                if (fs.existsSync(openclawToolsPath)) {
-                    let toolsMd = fs.readFileSync(openclawToolsPath, "utf8")
-                    const toolRegistryHeader = "## ACTIVE ADMIN TOOLS (Dynamic)"
-                    const registryContent = `\n\n${toolRegistryHeader}\n\n` +
-                        filteredTools.map(t => `### ${t.function.name}\n- Description: ${t.function.description}\n- Skill invocation: Use the tool name directly as a command: \`${t.function.name}\`. Example: \`${t.function.name}(${Object.keys(t.function.parameters.properties).map(k => `${k}="..."`).join(", ")})\`.`).join("\n\n")
+function selectTaskScopedOpenClawTools(task, tools) {
+    const text = String(task || "").toLowerCase()
+    const names = new Set()
+    const add = (name) => { if (tools.some(t => t.function.name === name)) names.add(name) }
 
-                    if (toolsMd.includes(toolRegistryHeader)) {
-                        toolsMd = toolsMd.split(toolRegistryHeader)[0] + registryContent
-                    } else {
-                        toolsMd += registryContent
-                    }
-                    fs.writeFileSync(openclawToolsPath, toolsMd, "utf8")
-                }
-            } catch (err) {
-                logger.warn({ err: err.message }, "OpenClaw: failed to update TOOLS.md")
-            }
+    if (inferExpenseToolCall(task)) {
+        add("add_expense")
+        add("query_db")
+    } else if (/\b(update|mark|set|change)\b.*\border\b|\border\b.*\b(update|mark|set|change)\b/.test(text)) {
+        add("update_order")
+        add("query_db")
+    } else if (/\bexpense|revenue|profit|month|today|orders|subscriptions|deliveries|coupon|customer|users?\b/.test(text)) {
+        add("query_db")
+    } else if (/\bpm2|log|logs|server|uptime|memory|restart|process\b/.test(text)) {
+        add("run_shell")
+        add("server_health")
+    } else if (/\bwhatsapp|message|send\b/.test(text)) {
+        add("send_whatsapp")
+    } else if (/\bhttp|url|api|website|status code|fetch\b/.test(text)) {
+        add("http_request")
+    } else if (/\bbrowser|open|navigate|click|page|chrome|screenshot\b/.test(text)) {
+        ;["open_browser","open_in_chrome","navigate","snapshot","click","fill","screenshot","read_page","close_browser","chrome_js","get_current_url"].forEach(add)
+    }
+
+    const scoped = tools.filter(t => names.has(t.function.name))
+    return scoped.length ? scoped : tools
+}
+
+function resolveOpenClawWorkspace(agentId) {
+    try {
+        const configPath = path.resolve(process.env.HOME, ".openclaw/openclaw.json")
+        const raw = JSON.parse(fs.readFileSync(configPath, "utf8"))
+        const list = Array.isArray(raw.agents?.list) ? raw.agents.list : []
+        const found = list.find(agent => agent.id === agentId)
+        if (found?.workspace) return found.workspace
+        if (raw.agents?.defaults?.workspace) return raw.agents.defaults.workspace
+    } catch {}
+    return path.resolve(process.env.HOME, `.openclaw/${agentId}_workspace`)
+}
+
+function parseLooseJson(text) {
+    const source = String(text || "").trim()
+    if (!source) return null
+    const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    const candidate = fenced ? fenced[1].trim() : source
+    const direct = candidate.match(/\{[\s\S]*\}$/)
+    const payload = direct ? direct[0] : candidate
+    try { return JSON.parse(payload) } catch { return null }
+}
+
+function extractOpenClawText(stdout) {
+    try {
+        const result = JSON.parse(stdout)
+        const payloads = result.result?.payloads || []
+        return {
+            text: payloads.map(p => p.text).filter(Boolean).join("\n").trim(),
+            meta: {
+                model: result.result?.meta?.agentMeta?.model || "unknown",
+                duration: result.result?.meta?.durationMs || 0,
+                status: result.status || "unknown",
+            },
         }
-
-        let finalTask = task
-        const toolsDesc = filteredTools.map(t => `- ${t.function.name}: ${t.function.description}`).join("\n")
-
-        if (hasNativeMessages) {
-            finalTask = renderMessagesForOpenClaw(options.messages)
-            logger.info({ flow: executionFlow, messages: options.messages.length }, "OpenClaw: using native flow messages")
-        } else if (!options.noContext) {
-            // Admin flow: provide DB context and schema to OpenClaw
-            try {
-                const { buildDbContext, getDbSchema, selectRelevantTables } = require("./admin")
-                const profile = loadProfile(workspaceId)
-                const dbPath = profile.dbPath || settings.admin.db_path
-                
-                // Optimization: identify relevant tables for the task to reduce token usage
-                const relevantTables = await selectRelevantTables(task, workspaceId)
-                
-                const dbContext = await buildDbContext(workspaceId, relevantTables)
-                const schema = getDbSchema(dbPath, relevantTables)
-                const notes = loadNotes(workspaceId)
-                
-                finalTask = `CONTEXT:
-${dbContext}
-
-DATABASE SCHEMA:
-${schema}
-${notes ? `\nDATA MODEL NOTES:\n${notes}` : ""}
-
-AVAILABLE TOOLS:
-${toolsDesc}
-
-SYSTEM INSTRUCTIONS:
-- You are an admin agent with direct access to the database and server via the tools listed above.
-- If a tool is listed under "AVAILABLE TOOLS", you MUST use it directly to fulfill the request.
-- Do NOT refuse access or claim you lack tools if they are listed in the AVAILABLE TOOLS block.
-- Examples of tool calls:
-  - query_db(sql="SELECT * FROM users")
-  - run_shell(command="pm2 status")
-- If a tool name doesn't work, use it with the 'skill_call' syntax:
-  - skill_call(skill="query_db", args={"sql": "SELECT * FROM users"})
-- Use 'query_db' for any data retrieval. It is a native tool you can call.
-- One customer might have multiple active subscriptions (e.g., for different meal types). Sum them all unless asked otherwise.
-- JOIN 'subscriptions' and 'subscription_deliveries' to get the most accurate, live count of delivered meals.
-- Use 'LIKE %name%' for customer searches to be robust against name variations.
-- If you cannot find a tool, check your 'Skills' or use the command format directly.
-
-ADMIN TASK:
-${task}`
-                const beforeLen = task.length
-                const afterLen = finalTask.length
-                logger.info({ beforeLen, afterLen, tables: relevantTables }, "OpenClaw: context built with schema pruning")
-            } catch (err) {
-                logger.warn({ err: err.message }, "OpenClaw: failed to build context, sending raw task")
-            }
-        } else {
-            // Even if noContext is true (explicit agent call), we must tell OpenClaw what it can do
-            finalTask = `AVAILABLE TOOLS:
-${toolsDesc}
-
-SYSTEM INSTRUCTIONS:
-- You are an admin agent with direct access to the database and server via the tools listed above.
-- If a tool is listed under "AVAILABLE TOOLS", you MUST use it directly to fulfill the request.
-- Do NOT refuse access or claim you lack tools if they are listed in the AVAILABLE TOOLS block.
-- Examples of tool calls:
-  - query_db(sql="SELECT * FROM users")
-  - run_shell(command="pm2 status")
-- If a tool name doesn't work, use it with the 'skill_call' syntax:
-  - skill_call(skill="query_db", args={"sql": "SELECT * FROM users"})
-- Use 'query_db' for any data retrieval. It is a native tool you can call.
-
-ADMIN TASK:
-${task}`
+    } catch {
+        return {
+            text: String(stdout || "").trim(),
+            meta: { model: "unknown", duration: 0, status: "raw" },
         }
+    }
+}
 
-        const args = [
-            "agent",
-            "--agent", openclawAgent,
-            "-m", finalTask,
-            "--json",
-            "--timeout", String(timeout),
-        ]
+function isMutationLikeTask(task) {
+    return /\b(add|record|insert|update|change|set|delete|remove|mark)\b/i.test(String(task || ""))
+}
 
-        if (options.noContext) {
-            // args.push("--no-context") // Flag not supported by OpenClaw CLI
-            logger.info("Admin: 'noContext' requested, but OpenClaw CLI does not support '--no-context'. Skipping flag.")
-        }
+function looksLikeOpenClawToolRefusal(text) {
+    const value = String(text || "").toLowerCase()
+    return [
+        "secureai-only tool",
+        "can't use",
+        "cannot use",
+        "need the real available tool path",
+        "don't have access",
+        "do not have access",
+        "lack access",
+    ].some(fragment => value.includes(fragment))
+}
 
-        logger.info({ task, backend: "openclaw", flow: executionFlow, cliCommand, noContext: !!options.noContext, nativeMessages: hasNativeMessages }, "openclaw: forwarding")
-        const child = exec(`${cliCommand} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
+function normalizeSlashDate(value) {
+    const match = String(value || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+    if (!match) return ""
+    const [, dd, mm, yyyy] = match
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`
+}
+
+function inferExpenseToolCall(task) {
+    const text = String(task || "").replace(/\s+/g, " ").trim()
+    if (!/^(?:add|record|insert)\s+expenses?\b/i.test(text)) return null
+    const amountMatch = text.match(/\b(?:rs\.?\s*|₹\s*)?(\d+(?:\.\d+)?)\b/i)
+    const dateMatch = text.match(/\bon\s+(\d{1,2}\/\d{1,2}\/\d{4})\b/i)
+    const headingMatch = text.match(/\bheading\b\s*(?::|\.{2,}|[-=])?\s*(.+)$/i)
+    const amount = amountMatch ? Number(amountMatch[1]) : NaN
+    const heading = headingMatch ? headingMatch[1].trim() : ""
+    const entryDate = dateMatch ? normalizeSlashDate(dateMatch[1]) : ""
+    if (!Number.isFinite(amount) || amount <= 0 || !heading) return null
+    return {
+        type: "tool_call",
+        tool: "add_expense",
+        args: {
+            heading,
+            expense: amount,
+            income: 0,
+            notes: `${heading} expense`,
+            ...(entryDate ? { entry_date: entryDate } : {}),
+        },
+    }
+}
+
+function buildCompactToolDocs(tools) {
+    return tools.map(t => {
+        const props = Object.keys(t.function.parameters?.properties || {})
+        return `- ${t.function.name}(${props.join(", ")})${t.function.description ? `: ${t.function.description}` : ""}`
+    }).join("\n") || "- No tools configured."
+}
+
+function buildCompactToolSchema(tools) {
+    return tools.map(t => {
+        const params = Object.entries(t.function.parameters?.properties || {}).map(([key, value]) => `${key}:${value.type || "any"}`).join(", ")
+        return `- ${t.function.name}{${params}}`
+    }).join("\n") || "- No tool schemas configured."
+}
+
+function buildMutationCorrection(task, filteredTools) {
+    const mutationToolNames = filteredTools.map(t => t.function.name).filter(name =>
+        /add|update|delete|remove|mark|query_db|run_shell/.test(name)
+    )
+    const exactExpenseCall = inferExpenseToolCall(task)
+    return `SYSTEM CORRECTION: This request is a real business operation and must be completed using the SecureAI bridge tools available in this session.
+You are allowed to call these tools here: ${mutationToolNames.join(", ") || "the listed tools above"}.
+Return JSON only now.
+${exactExpenseCall ? `If this is the expense entry described by the user, call exactly:\n${JSON.stringify(exactExpenseCall)}` : ""}
+If the task is already complete, return:
+{"type":"final","message":"..."}`
+}
+
+function transcriptHasSuccessfulToolResult(transcript = []) {
+    return transcript.some(line => /TOOL RESULT .*: ✅/i.test(String(line || "")))
+}
+
+function looksLikeSuccessfulFinal(text) {
+    const value = String(text || "").toLowerCase()
+    return value.includes("✅") || value.includes("successfully") || value.includes("already added") || value.includes("expense added")
+}
+
+async function execOpenClawTurn({ cliCommand, args, timeout, logContext }) {
+    return await new Promise((resolve) => {
+        logger.info(logContext, "openclaw: forwarding")
+        exec(`${cliCommand} ${args.map(a => `'${String(a).replace(/'/g, "'\\''")}'`).join(" ")}`, {
             timeout: (timeout + 10) * 1000,
             env: { ...process.env },
         }, (err, stdout, stderr) => {
             if (err && !stdout) {
                 logger.error({ err: err.message, stderr }, "openclaw agent failed")
-                resolve(`❌ OpenClaw error: ${err.message}`)
+                resolve({ ok: false, text: `❌ OpenClaw error: ${err.message}`, meta: { status: "error" } })
                 return
             }
-            try {
-                const result = JSON.parse(stdout)
-                const payloads = result.result?.payloads || []
-                
-                // If OpenClaw output contains tool calls in its own format, we might need to bridge them
-                // but usually it should just return text if it doesn't have a native integration.
-                // However, our task description now tells it tools exist. 
-                // If OpenClaw tries to call a tool by printing something like 'TOOL: query_db {"sql": "... "}'
-                // we would need a wrapper. 
-                // BUT, OpenClaw CLI's "agent" mode is a full turn that usually returns a final answer.
-                
-                const text = payloads.map(p => p.text).filter(Boolean).join("\n")
-                const model = result.result?.meta?.agentMeta?.model || "unknown"
-                const duration = result.result?.meta?.durationMs || 0
-                const reply = text || `⚠️ OpenClaw returned no text (status: ${result.status})`
-                logger.info({ model, duration, status: result.status }, "openclaw agent done")
-                resolve(reply)
-            } catch {
-                resolve(stdout.trim() || `❌ OpenClaw: unexpected output`)
-            }
+            const parsed = extractOpenClawText(stdout)
+            logger.info(parsed.meta, "openclaw agent done")
+            resolve({ ok: true, text: parsed.text, meta: parsed.meta })
         })
     })
+}
+
+function buildOpenClawBridgePrompt({ task, toolsDesc, toolSchema, contextBlock, transcript }) {
+    const exactExpenseCall = inferExpenseToolCall(task)
+    return `Healthy Meal Spot admin via OpenClaw.
+
+SecureAI bridge tools in this session:
+${toolsDesc}
+
+Schema:
+${toolSchema}
+
+Reply with one JSON object only.
+Tool call:
+{"type":"tool_call","tool":"tool_name","args":{"key":"value"}}
+Final:
+{"type":"final","message":"your reply"}
+
+Rules:
+- Use listed tools when needed.
+- Never say listed tools are unavailable.
+- One tool call per turn.
+- No markdown. No extra prose outside JSON.
+${exactExpenseCall ? `- For this expense request, prefer:\n${JSON.stringify(exactExpenseCall)}` : ""}
+
+${contextBlock}
+
+TRANSCRIPT:
+${transcript}
+
+TASK:
+${task}`
+}
+
+async function runOpenClawAgent(task, options = {}) {
+    const flow = options.flow || "agent"
+
+    const executionFlow = options.flow || flow || "agent"
+    const openclawAgent = executionFlow === "admin" ? "admin" : "main"
+    const workspaceId = options.workspaceId || getActiveWorkspace()
+    const backendConfig = options.backend_config || {}
+    const timeout = Number(options.timeout || backendConfig.timeout || 90)
+    const cliCommand = String(options.command || backendConfig.command || "openclaw").trim() || "openclaw"
+    const hasNativeMessages = Array.isArray(options.messages) && options.messages.length > 0
+    const openclawSessionId = String(
+        options.openclawSessionId
+        || `${executionFlow}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    )
+    const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config/settings.json"), "utf8"))
+    const filteredTools = selectTaskScopedOpenClawTools(task, getFilteredOpenClawTools(workspaceId, executionFlow, cfg))
+    const toolsDesc = buildCompactToolDocs(filteredTools)
+    const toolSchema = buildCompactToolSchema(filteredTools)
+
+    try {
+        const openclawWorkspace = resolveOpenClawWorkspace(openclawAgent)
+        const openclawToolsPath = path.resolve(openclawWorkspace, "TOOLS.md")
+        if (fs.existsSync(openclawToolsPath)) {
+            let toolsMd = fs.readFileSync(openclawToolsPath, "utf8")
+            const toolRegistryHeader = "## ACTIVE ADMIN TOOLS (Dynamic)"
+            const registryContent = `\n\n${toolRegistryHeader}\n\n` +
+                filteredTools.map(t => `### ${t.function.name}\n- Description: ${t.function.description}\n- Parameters: ${Object.keys(t.function.parameters?.properties || {}).join(", ") || "(none)"}`).join("\n\n")
+            if (toolsMd.includes(toolRegistryHeader)) toolsMd = toolsMd.split(toolRegistryHeader)[0] + registryContent
+            else toolsMd += registryContent
+            fs.writeFileSync(openclawToolsPath, toolsMd, "utf8")
+        }
+    } catch (err) {
+        logger.warn({ err: err.message }, "OpenClaw: failed to update TOOLS.md")
+    }
+
+    let contextBlock = ""
+    if (!options.noContext && executionFlow === "admin") {
+        try {
+            const { buildDbContext, getDbSchema, selectRelevantTables } = require("./admin")
+            const profile = loadProfile(workspaceId)
+            const dbPath = profile.dbPath || settings.admin.db_path
+            const relevantTables = await selectRelevantTables(task, workspaceId)
+            const schema = getDbSchema(dbPath, relevantTables)
+            const expenseCall = inferExpenseToolCall(task)
+            if (expenseCall) {
+                contextBlock = `CONTEXT:
+DATE: ${new Date().toISOString().slice(0, 10)}
+SCHEMA:
+${schema}`
+            } else {
+                const dbContext = await buildDbContext(workspaceId, relevantTables)
+                const notes = loadNotes(workspaceId)
+                contextBlock = `CONTEXT:
+${dbContext}
+
+SCHEMA:
+${schema}
+${notes ? `\nNOTES:\n${notes.slice(0, 1200)}` : ""}`
+            }
+            logger.info({ beforeLen: String(task || "").length, afterLen: contextBlock.length, tables: relevantTables, toolCount: filteredTools.length }, "OpenClaw: compact context built")
+        } catch (err) {
+            logger.warn({ err: err.message }, "OpenClaw: failed to build context, continuing without context block")
+        }
+    }
+
+    const transcript = []
+    if (hasNativeMessages) {
+        transcript.push(`Conversation so far:\n${renderMessagesForOpenClaw(options.messages)}`)
+        logger.info({ flow: executionFlow, messages: options.messages.length }, "OpenClaw: using native flow messages")
+    }
+    transcript.push(`USER: ${task}`)
+
+    const maxTurns = Math.max(1, Number(backendConfig.max_tool_turns || 8))
+    for (let turn = 0; turn < maxTurns; turn++) {
+        const hasSuccessfulTool = transcriptHasSuccessfulToolResult(transcript)
+        const prompt = buildOpenClawBridgePrompt({
+            task,
+            toolsDesc,
+            toolSchema,
+            contextBlock,
+            transcript: transcript.join("\n\n"),
+        })
+        const args = [
+            "agent",
+            "--agent", openclawAgent,
+            "--session-id", openclawSessionId,
+            "-m", prompt,
+            "--json",
+            "--timeout", String(timeout),
+        ]
+
+        if (options.noContext) logger.info("Admin: 'noContext' requested, OpenClaw bridge is sending only minimal tool/task context.")
+
+        const response = await execOpenClawTurn({
+            cliCommand,
+            args,
+            timeout,
+            logContext: { task, backend: "openclaw", flow: executionFlow, cliCommand, noContext: !!options.noContext, nativeMessages: hasNativeMessages, turn: turn + 1 },
+        })
+        if (!response.ok) return response.text
+        logger.info({ turn: turn + 1, textPreview: String(response.text || "").slice(0, 400) }, "openclaw: response preview")
+
+        const parsed = parseLooseJson(response.text)
+        if (!parsed) {
+            if (looksLikeSuccessfulFinal(response.text)) {
+                return String(response.text).trim()
+            }
+            if (isMutationLikeTask(task) && !hasSuccessfulTool && turn + 1 < maxTurns) {
+                transcript.push(buildMutationCorrection(task, filteredTools))
+                transcript.push(`ASSISTANT REFUSAL TO CORRECT: ${String(response.text)}`)
+                continue
+            }
+            return response.text || `⚠️ OpenClaw returned no text (status: ${response.meta?.status || "unknown"})`
+        }
+
+        if (parsed.type === "final" && parsed.message) {
+            if (isMutationLikeTask(task) && !hasSuccessfulTool && !looksLikeSuccessfulFinal(parsed.message) && turn + 1 < maxTurns) {
+                transcript.push(buildMutationCorrection(task, filteredTools))
+                transcript.push(`ASSISTANT FINAL TO CORRECT: ${String(parsed.message)}`)
+                continue
+            }
+            return String(parsed.message).trim()
+        }
+
+        if (parsed.type === "tool_call" && parsed.tool) {
+            const toolName = String(parsed.tool)
+            const toolArgs = parsed.args && typeof parsed.args === "object" ? parsed.args : {}
+            if (!filteredTools.some(t => t.function.name === toolName)) {
+                transcript.push(`TOOL ERROR: ${toolName} is not in the allowed tool list.`)
+                continue
+            }
+            const toolResult = await dispatchTool(toolName, toolArgs, {
+                role: settings.admin?.role || "super_admin",
+                worker: "operator",
+                task,
+                taskId: null,
+                workspaceId,
+            })
+            transcript.push(`ASSISTANT TOOL REQUEST: ${JSON.stringify({ tool: toolName, args: toolArgs })}`)
+            transcript.push(`TOOL RESULT (${toolName}): ${String(toolResult)}`)
+            continue
+        }
+
+        if (parsed.message) {
+            if (isMutationLikeTask(task) && !hasSuccessfulTool && !looksLikeSuccessfulFinal(parsed.message) && turn + 1 < maxTurns) {
+                transcript.push(buildMutationCorrection(task, filteredTools))
+                transcript.push(`ASSISTANT REFUSAL TO CORRECT: ${String(parsed.message)}`)
+                continue
+            }
+            return String(parsed.message).trim()
+        }
+        return response.text || "⚠️ OpenClaw returned an unsupported response."
+    }
+
+    return "⚠️ OpenClaw reached the tool-turn limit without completing the task."
 }
 
 async function dispatchAgentTask(task, options = {}) {
@@ -1388,7 +1603,7 @@ async function dispatchAgentTask(task, options = {}) {
 }
 
 async function clearOpenClawSessions() {
-    const agents = ["admin", "agent"]
+    const agents = ["admin", "main"]
     for (const agent of agents) {
         await new Promise((resolve) => {
             const sessionsDir = path.resolve(process.env.HOME, `.openclaw/agents/${agent}/sessions`)
@@ -1418,4 +1633,11 @@ async function clearOpenClawSessions() {
     }
 }
 
-module.exports = { runAgentLoop, runOpenClawAgent, dispatchAgentTask, clearOpenClawSessions }
+module.exports = {
+    runAgentLoop,
+    runOpenClawAgent,
+    dispatchAgentTask,
+    clearOpenClawSessions,
+    resolveToolDefinitions,
+    getFilteredOpenClawTools,
+}

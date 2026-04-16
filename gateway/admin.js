@@ -23,7 +23,7 @@ function getSettings() { return require("../config/settings.json") }
 function getAdminCfg() { return getSettings().admin }
 function getFlowCfg(flow) { return getSettings().flows?.[flow] || {} }
 const DEFAULT_ADMIN_TOOLS = ["query_db", "shell", "approvals"]
-const DEFAULT_AGENT_TOOLS = ["run_shell", "mac_automation", "query_db", "send_whatsapp", "http_request", "open_browser", "screenshot", "click", "fill", "skill_call"]
+const DEFAULT_AGENT_TOOLS = ["run_shell", "mac_automation", "query_db", "send_whatsapp", "http_request", "open_browser", "screenshot", "click", "fill", "run_skill"]
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -438,27 +438,29 @@ async function selectRelevantTables(task, workspaceId) {
     
     if (allTables.length <= 3) return allTables // too few tables, just send all
 
-    const notes = loadNotes(workspaceId)
-    const prompt = `You are a database expert. Given a task and a list of tables, select ONLY the tables that are relevant to the task. 
-The task is: "${task}"
+    const text = String(task || "").toLowerCase()
+    const selected = new Set()
+    const addIfPresent = (tableName) => { if (allTables.includes(tableName)) selected.add(tableName) }
 
-Available tables:
-${allTables.join(", ")}
-
-${notes ? `\nData model notes:\n${notes}\n` : ""}
-
-Return ONLY a comma-separated list of table names, no other text.`
-
-    try {
-        const flowCfg = getAdminDirectLlmConfig()
-        const messages = prepareRequest(prompt, "admin", { dynamicContext: notes ? `Data model notes:\n${notes}\n` : "" })
-        const res = await complete(messages, { flow: "admin", llmConfig: flowCfg, max_tokens: 50 })
-        if (!res) return allTables
-        const selected = res.split(",").map(s => s.trim()).filter(s => allTables.includes(s))
-        return selected.length > 0 ? selected : allTables
-    } catch {
-        return allTables
+    if (/\bexpense|expenses|income|grocery|purchase|fuel|rent|salary\b/.test(text)) addIfPresent("expenses")
+    if (/\border|orders|delivery|deliveries|invoice|payment|paid|unpaid|cart|customer order\b/.test(text)) addIfPresent("orders")
+    if (/\bsubscription|subscriptions|meal plan|plan|renewal|expiry|expires\b/.test(text)) addIfPresent("subscriptions")
+    if (/\bdelivery|deliveries|delivered|meal delivered\b/.test(text)) addIfPresent("subscription_deliveries")
+    if (/\bmenu|menus|dish|dishes|item|items|calorie|protein|veg|non-veg|nonveg\b/.test(text)) {
+        addIfPresent("menu_sections")
+        addIfPresent("menu_items")
+        addIfPresent("corporate_menu_sections")
+        addIfPresent("corporate_menu_items")
     }
+    if (/\bcoupon|coupons|discount|promo|offer|free delivery\b/.test(text)) addIfPresent("coupons")
+    if (/\buser|users|customer|customers|mobile|address|diet|goal\b/.test(text)) addIfPresent("users")
+    if (/\bbulk|corporate\b/.test(text)) addIfPresent("bulk_orders")
+    if (/\bkitchen|closure|closed\b/.test(text)) {
+        addIfPresent("app_state")
+        addIfPresent("kitchen_closures")
+    }
+
+    return selected.size ? Array.from(selected) : allTables
 }
 
 async function handleAdmin(payload, options = {}) {
@@ -519,12 +521,6 @@ async function handleAdmin(payload, options = {}) {
 
     const adminExecution = decideAdminExecution({ flow, flowConfig: flowCfg, payload })
 
-    if (adminExecution.mode === "backend") {
-        return await finalizeAdminResponse(payload, { ...options, workspaceId, user, role }, async () =>
-            await answerAdminViaConfiguredMode(resolvedRequest, workspaceId, options.phone || workspaceId)
-        )
-    }
-
     // Agentic mode — full OpenAI function-calling loop
     if (flow === "agent" || /^agent\s+/i.test(payload) || (flow === "admin" && getAdminCfg()?.default_to_agent)) {
         if (mode === "query_only" || mode === "shell_only") {
@@ -549,6 +545,12 @@ async function handleAdmin(payload, options = {}) {
         logger.info({ payload, user: user.name }, "admin: mutation detected, routing to agent")
         return await finalizeAdminResponse(payload, { ...options, workspaceId, user, role }, async () =>
             await dispatchAgentTask(payload, { workspaceId, role, flow, backend: flowCfg.backend })
+        )
+    }
+
+    if (adminExecution.mode === "backend") {
+        return await finalizeAdminResponse(payload, { ...options, workspaceId, user, role }, async () =>
+            await answerAdminViaConfiguredMode(resolvedRequest, workspaceId, options.phone || workspaceId)
         )
     }
 
@@ -648,6 +650,8 @@ module.exports = {
     handleAdminImage, 
     getShellPatterns, 
     getUsers, 
+    getAllowedToolsForFlow,
+    getFlowAccessConfig,
     buildDbContext, 
     getDbSchema,
     selectRelevantTables

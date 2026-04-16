@@ -33,6 +33,9 @@ const yaml = require("js-yaml")
 const { normalizeCustomerExecutionConfig, validateCustomerExecutionConfig } = require("../runtime/customerExecutionConfig")
 const { listCustomerBackendPresets, getCustomerBackendPreset } = require("../runtime/customerBackendPresets")
 const { summarizeCustomerLog } = require("../runtime/customerObservability")
+const { buildFlowCapabilitiesSnapshot } = require("../runtime/flowCapabilities")
+const { buildDemoPreview } = require("../runtime/demoPreview")
+const { listMonthlyExpenses } = require("../domain-packs/restaurant/admin-tools")
 
 const PORT   = Number(process.env.HTTP_PORT) || settings.transports?.http?.port || 3010
 const SECRET = settings.api.secret
@@ -40,6 +43,7 @@ const PUBLIC_DIR = path.resolve(__dirname, "../public")
 const setupConfig = settings.setup || {}
 const SETUP_USER = process.env.SETUP_USER || setupConfig.username || "linkedin"
 const SETUP_PASS = process.env.SETUP_PASS || setupConfig.password || "community"
+const SETUP_ACCOUNTS = Array.isArray(setupConfig.accounts) ? setupConfig.accounts : []
 const SETUP_HOSTS = String(process.env.SETUP_HOST || setupConfig.hosts || "localhost").split(",").map(h => h.trim().toLowerCase()).filter(Boolean)
 const SETUP_COOKIE = "secureai_session"
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12
@@ -47,6 +51,10 @@ const SETUP_BRAND = process.env.SETUP_BRAND || setupConfig.brand || "SecureAI"
 const SETUP_LOGIN_TITLE = process.env.SETUP_LOGIN_TITLE || setupConfig.login_title || "Enter the agent workspace."
 const SETUP_LOGIN_LEDE = process.env.SETUP_LOGIN_LEDE || setupConfig.login_lede || "Use the branded entry screen to reach your business agent console."
 const SETUP_LOGIN_SUBMIT = process.env.SETUP_LOGIN_SUBMIT || setupConfig.login_submit || "Continue"
+const demoConfig = settings.demo || {}
+const DEMO_HOSTS = String(process.env.DEMO_HOST || demoConfig.hosts || "").split(",").map(h => h.trim().toLowerCase()).filter(Boolean)
+const DEMO_TITLE = process.env.DEMO_TITLE || demoConfig.title || "SecureAI Live Demo"
+const DEMO_LEDE = process.env.DEMO_LEDE || demoConfig.lede || "Explore how policy, governance, and flows work together."
 const OPENCLAW_HOME = path.resolve(process.env.HOME || "", ".openclaw")
 
 function readBody(req) {
@@ -114,8 +122,46 @@ function serveFile(res, filePath) {
     res.writeHead(200).end(content)
 }
 
+function serveDemoIndex(req, res) {
+    const filePath = path.join(PUBLIC_DIR, "demo", "index.html")
+    if (!fs.existsSync(filePath)) {
+        sendJson(res, 404, { error: "not_found" })
+        return
+    }
+    const ct = contentType(filePath)
+    res.setHeader("Content-Type", ct)
+    res.setHeader("Cache-Control", "no-cache")
+    const meta = getPublicDemoMeta(req)
+    const bootstrap = JSON.stringify(meta).replace(/</g, "\\u003c")
+    let content = fs.readFileSync(filePath, "utf8")
+        .replace(/(\.js)("|')/g, `$1?v=${ASSET_V}$2`)
+        .replace(/(\.css)("|')/g, `$1?v=${ASSET_V}$2`)
+    content = content
+        .replace('id="hero-lede-inline">Type a request, or start with a sample to preview how SecureAI handles it.</p>', `id="hero-lede-inline">${escapeHtml(meta.lede || "Explore live runtime flow behavior.")}</p>`)
+        .replace('id="runtime-health">Loading…</strong>', `id="runtime-health">${escapeHtml(meta.health?.status === "ok" ? `Online · ${meta.health.agent || "agent"}` : (meta.health?.status || "unknown"))}</strong>`)
+        .replace('id="runtime-pack">Loading…</strong>', `id="runtime-pack">${escapeHtml(meta.domainPack?.name || meta.profile?.domainPack || "No domain pack")}</strong>`)
+        .replace('id="runtime-workspace">Loading…</strong>', `id="runtime-workspace">${escapeHtml(meta.workspaceId || "unknown")}</strong>`)
+        .replace('id="runtime-time">Loading…</strong>', `id="runtime-time">${escapeHtml(meta.generatedAt ? new Date(meta.generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "n/a")}</strong>`)
+        .replace('window.__DEMO_META__=window.__DEMO_META__||null;', `window.__DEMO_META__=${bootstrap};`)
+    res.writeHead(200).end(content)
+}
+
+function escapeHtml(value) {
+    return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+}
+
 function unauthorizedSetup(res) {
     sendJson(res, 401, { error: "setup_auth_required" })
+}
+
+function resolveWorkspaceDbPath(workspaceId) {
+    const profile = loadProfile(workspaceId)
+    return profile.dbPath || settings.admin?.db_path || ""
 }
 
 function cookieSecureFlag(req) {
@@ -145,23 +191,61 @@ function createSessionToken(identity = SETUP_USER) {
     return Buffer.from(`${payload}:${signature}`).toString("base64url")
 }
 
-function isSetupAuthorized(req) {
+function parseSetupSession(req) {
     const token = parseCookies(req)[SETUP_COOKIE]
-    if (!token) return false
+    if (!token) return null
     try {
         const decoded = Buffer.from(token, "base64url").toString("utf8")
         const parts = decoded.split(":")
-        if (parts.length !== 3) return false
+        if (parts.length !== 3) return null
         const [username, expiresAtRaw, signature] = parts
         const payload = `${username}:${expiresAtRaw}`
         const expected = crypto.createHmac("sha256", SECRET).update(payload).digest("hex")
         const expiresAt = Number(expiresAtRaw)
-        if (!username || !Number.isFinite(expiresAt)) return false
-        if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false
-        return !!username && expiresAt > Date.now()
+        if (!username || !Number.isFinite(expiresAt)) return null
+        if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null
+        if (!(expiresAt > Date.now())) return null
+        return { username, expiresAt }
     } catch {
-        return false
+        return null
     }
+}
+
+function isSetupAuthorized(req) {
+    return !!parseSetupSession(req)
+}
+
+function getSetupAccounts() {
+    if (SETUP_ACCOUNTS.length > 0) {
+        return SETUP_ACCOUNTS.map(account => ({
+            username: String(account.username || "").trim(),
+            password: String(account.password || ""),
+            readOnly: !!account.read_only,
+        })).filter(account => account.username)
+    }
+    return [{ username: SETUP_USER, password: SETUP_PASS, readOnly: false }]
+}
+
+function getSetupAccount(username) {
+    const normalized = String(username || "").trim()
+    return getSetupAccounts().find(account => account.username === normalized) || null
+}
+
+function getSetupAccess(req) {
+    const session = parseSetupSession(req)
+    if (!session) return { authorized: false, username: "", readOnly: false }
+    const account = getSetupAccount(session.username)
+    return {
+        authorized: true,
+        username: session.username,
+        readOnly: !!account?.readOnly,
+    }
+}
+
+function isReadOnlyBlocked(req, pathname) {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return false
+    if (req.method === "POST" && (pathname === "/setup/logout" || pathname === "/setup/workspace/select")) return false
+    return true
 }
 
 function clearSession(res) {
@@ -348,6 +432,67 @@ function getSetupAuthConfig() {
     }
 }
 
+function getSetupSessionPayload(req) {
+    const access = getSetupAccess(req)
+    return {
+        ok: true,
+        authorized: access.authorized,
+        username: access.username,
+        readOnly: access.readOnly,
+    }
+}
+
+function getPublicDemoMeta(req) {
+    const workspaceId = getWorkspaceFromReq(req)
+    const snapshot = buildFlowCapabilitiesSnapshot(workspaceId)
+    const summarizeFlow = (flow = {}) => ({
+        status: flow.status || "unknown",
+        backend: flow.backend || "direct",
+        truthSources: flow.truthSources || [],
+        tools: (flow.tools || flow.runtimeTools || []).map(tool => ({
+            name: tool.name,
+            type: tool.type || "",
+            ready: tool.handlerReady !== false && (!tool.governance || tool.governance.allowed !== false),
+            detail: tool.governance
+                ? { category: tool.governance.category || "", risk: tool.governance.risk || "", reason: tool.governance.reason || "" }
+                : {},
+        })),
+        probes: (flow.probes || []).map(probe => ({
+            name: probe.name,
+            ok: !!probe.ok,
+            severity: probe.severity || "error",
+            detail: probe.detail || "",
+        })),
+        intents: (flow.intents || []).map(intent => ({
+            name: intent.name,
+            tool: intent.tool,
+            auth_required: !!intent.auth_required,
+        })),
+        routing: (flow.routing || []).map(route => ({
+            intent: route.intent,
+            mode: route.mode,
+            reason: route.reason,
+        })),
+    })
+
+    return {
+        ok: true,
+        host: hostName(req),
+        title: DEMO_TITLE,
+        lede: DEMO_LEDE,
+        generatedAt: snapshot.generatedAt,
+        workspaceId: snapshot.workspaceId,
+        health: snapshot.health,
+        profile: snapshot.profile,
+        domainPack: snapshot.domainPack,
+        flows: {
+            customer: summarizeFlow(snapshot.flows?.customer),
+            admin: summarizeFlow(snapshot.flows?.admin),
+            agent: summarizeFlow(snapshot.flows?.agent),
+        },
+    }
+}
+
 function redirectToLogin(req, res) {
     const url = requestUrl(req)
     const next = `${url.pathname}${url.search}`
@@ -362,6 +507,7 @@ const server = http.createServer(async (req, res) => {
     const url = requestUrl(req)
     const pathname = url.pathname
     const setupHost = SETUP_HOSTS.includes(host)
+    const demoHost = DEMO_HOSTS.includes(host)
 
     const PAGE_MAP = {
         "/": "dashboard.html",
@@ -376,6 +522,41 @@ const server = http.createServer(async (req, res) => {
         "/setup": "dashboard.html",
         "/setup/intercept": "intercept-v2.html",
         "/setup/control": "control.html",
+    }
+    const DEMO_PAGE_MAP = {
+        "/demo": "index.html",
+    }
+
+    if (req.method === "GET" && pathname === "/demo/meta") {
+        sendJson(res, 200, getPublicDemoMeta(req))
+        return
+    }
+
+    if (req.method === "POST" && pathname === "/demo/preview") {
+        try {
+            const body = await readBody(req)
+            const workspaceId = getWorkspaceFromReq(req)
+            sendJson(res, 200, buildDemoPreview(String(body.message || ""), workspaceId))
+        } catch (err) {
+            logger.error({ err }, "demo preview failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && ((demoHost && pathname === "/") || DEMO_PAGE_MAP[pathname])) {
+        serveDemoIndex(req, res)
+        return
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/demo/") && pathname !== "/demo/meta") {
+        const rel = pathname.replace("/demo/", "")
+        const safe = path.normalize(rel).replace(/^(\.\.[/\\])+/, "")
+        const filePath = path.join(PUBLIC_DIR, "demo", safe)
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            serveFile(res, filePath)
+            return
+        }
     }
 
     const isSetupPath = pathname.startsWith("/setup") || setupHost || PAGE_MAP[pathname] || pathname === "/login" || pathname.startsWith("/agent/") || pathname.startsWith("/governance")
@@ -396,6 +577,11 @@ const server = http.createServer(async (req, res) => {
             unauthorizedSetup(res)
             return
         }
+        const setupAccess = getSetupAccess(req)
+        if (setupAccess.readOnly && isReadOnlyBlocked(req, pathname)) {
+            sendJson(res, 403, { error: "setup_read_only", message: "This account has read-only setup access." })
+            return
+        }
     }
 
     if (req.method === "GET" && pathname === "/login") {
@@ -405,6 +591,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname === "/setup/auth/config") {
         sendJson(res, 200, getSetupAuthConfig())
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/auth/session") {
+        sendJson(res, 200, getSetupSessionPayload(req))
         return
     }
 
@@ -435,7 +626,8 @@ const server = http.createServer(async (req, res) => {
             const body = await readBody(req)
             const username = String(body.username || "").trim()
             const password = String(body.password || "")
-            if (username !== SETUP_USER || password !== SETUP_PASS) {
+            const account = getSetupAccount(username)
+            if (!account || password !== account.password) {
                 clearSession(res)
                 sendJson(res, 401, { error: "invalid_credentials" })
                 return
@@ -687,6 +879,35 @@ const server = http.createServer(async (req, res) => {
             sendJson(res, 200, getGovernanceSnapshot(settings.admin?.role, workspaceId))
         } catch (err) {
             logger.error({ err }, "setup governance failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/flow-capabilities") {
+        try {
+            const workspaceId = getWorkspaceFromReq(req)
+            sendJson(res, 200, buildFlowCapabilitiesSnapshot(workspaceId))
+        } catch (err) {
+            logger.error({ err }, "setup flow capabilities failed")
+            sendJson(res, 500, { error: err.message })
+        }
+        return
+    }
+
+    if (req.method === "GET" && pathname === "/setup/expenses/monthly") {
+        try {
+            const workspaceId = getWorkspaceFromReq(req)
+            const dbPath = resolveWorkspaceDbPath(workspaceId)
+            if (!dbPath) {
+                sendJson(res, 400, { error: "No database configured for this workspace" })
+                return
+            }
+            const month = url.searchParams.get("month")
+            const result = listMonthlyExpenses(dbPath, month)
+            sendJson(res, 200, { ok: true, workspaceId, ...result })
+        } catch (err) {
+            logger.error({ err }, "setup monthly expenses failed")
             sendJson(res, 500, { error: err.message })
         }
         return

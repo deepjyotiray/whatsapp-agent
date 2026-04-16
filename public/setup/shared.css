@@ -33,6 +33,7 @@ a:hover { text-decoration: underline; }
 .topbar-left .logo { font: 700 11px/1 "Courier New", monospace; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent); }
 .topbar-left h1 { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
 .topbar-right { display: flex; align-items: center; gap: 14px; }
+.readonly-indicator { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; background: rgba(234, 179, 8, 0.12); color: var(--yellow); border: 1px solid rgba(234, 179, 8, 0.28); font: 700 0.7rem/1 "Courier New", monospace; letter-spacing: 0.04em; text-transform: uppercase; }
 .topbar-right select { padding: 6px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font: inherit; font-size: 0.82rem; outline: none; }
 .topbar-right select:focus { border-color: var(--accent); }
 .topbar-right .ws-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
@@ -49,6 +50,7 @@ a:hover { text-decoration: underline; }
 
 /* ── Page Shell ──────────────────────────────────────────────────────────── */
 .page { margin-top: var(--topbar-h); margin-left: var(--sidebar-w); padding: 24px; min-height: calc(100vh - var(--topbar-h)); }
+.readonly-banner { margin-bottom: 16px; padding: 12px 14px; border-radius: var(--radius-sm); background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.28); color: var(--yellow); font-size: 0.84rem; }
 .page-header { margin-bottom: 24px; }
 .page-header h2 { font-size: 1.3rem; font-weight: 700; }
 .page-header p { color: var(--muted); font-size: 0.88rem; margin-top: 4px; }
@@ -79,6 +81,10 @@ textarea { resize: vertical; min-height: 60px; }
 .btn { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 9px 18px; font: 600 0.84rem/1 -apple-system, sans-serif; cursor: pointer; transition: opacity 120ms, transform 80ms; }
 .btn:hover { opacity: 0.88; transform: translateY(-1px); }
 .btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+.setup-read-only input:disabled,
+.setup-read-only textarea:disabled,
+.setup-read-only select:disabled,
+.setup-read-only button:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-green { background: var(--green); color: #000; }
 .btn-red { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
@@ -101,6 +107,15 @@ textarea { resize: vertical; min-height: 60px; }
 .kv-grid dt { color: var(--muted); white-space: nowrap; }
 .kv-grid dd { color: var(--text-2); word-break: break-all; }
 .code-block { padding: 14px; border-radius: var(--radius-sm); background: var(--bg); border: 1px solid var(--border); color: var(--text-2); font: 0.82rem/1.5 "SF Mono", "Courier New", monospace; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
+.data-table-shell { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+.data-table { width: 100%; border-collapse: collapse; min-width: 720px; }
+.data-table th,
+.data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; font-size: 0.82rem; vertical-align: top; }
+.data-table th { color: var(--muted); font: 700 0.72rem/1 "Courier New", monospace; letter-spacing: 0.05em; text-transform: uppercase; background: var(--surface-2); }
+.data-table td { color: var(--text-2); }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.subtle { color: var(--muted); font-size: 0.8rem; }
 
 /* ── Stat Cards ──────────────────────────────────────────────────────────── */
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }

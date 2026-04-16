@@ -5,6 +5,9 @@ const { complete } = require("../providers/llm")
 const logger = require("../gateway/logger")
 
 const MAX_RAG_CHARS = 4000
+const CACHE_TTL_MS = 60 * 1000
+const EMPTY_CACHE_TTL_MS = 10 * 60 * 1000
+const _resultCache = new Map()
 
 function getDb(dbPath) {
     const db = new Database(dbPath, { readonly: true })
@@ -97,12 +100,49 @@ function formatResults(rows) {
     }).join("\n")
 }
 
+function normalizeQuery(query = "") {
+    return String(query || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+function buildCacheKey(dbPath, query, filter) {
+    return JSON.stringify({
+        dbPath: String(dbPath || ""),
+        query: normalizeQuery(query),
+        filter: filter || {},
+    })
+}
+
+function getCachedResult(key) {
+    const entry = _resultCache.get(key)
+    if (!entry) return null
+    if (Date.now() > entry.expiresAt) {
+        _resultCache.delete(key)
+        return null
+    }
+    return entry.value
+}
+
+function setCachedResult(key, value, ttlMs) {
+    _resultCache.set(key, {
+        value,
+        expiresAt: Date.now() + ttlMs,
+    })
+    return value
+}
+
 async function execute(filter, context, toolConfig) {
     const { db_path, system_prompt } = toolConfig
     if (!db_path) return "Database not configured."
 
     const query = context.resolvedRequest?.effectiveMessage || context.rawMessage || ""
     const effectiveFilter = context.resolvedRequest?.appliedFilters || filter
+    const cacheKey = buildCacheKey(db_path, query, effectiveFilter)
+    const cached = getCachedResult(cacheKey)
+    if (cached) return cached
 
     const db = getDb(db_path)
     try {
@@ -111,17 +151,21 @@ async function execute(filter, context, toolConfig) {
 
         const { rows } = keywordSearch(db, tables, query, effectiveFilter)
 
-        if (!rows.length) return "Sorry, nothing matched your query."
+        if (!rows.length) {
+            return setCachedResult(cacheKey, "Sorry, nothing matched your query.", EMPTY_CACHE_TTL_MS)
+        }
 
         const formatted = formatResults(rows)
-        if (!formatted) return "Sorry, nothing matched your query."
+        if (!formatted) {
+            return setCachedResult(cacheKey, "Sorry, nothing matched your query.", EMPTY_CACHE_TTL_MS)
+        }
 
         const trimmed = formatted.length > MAX_RAG_CHARS
             ? formatted.slice(0, MAX_RAG_CHARS) + "\n\n(data truncated)"
             : formatted
 
         if (context?.skipLlm) {
-            return trimmed
+            return setCachedResult(cacheKey, trimmed, CACHE_TTL_MS)
         }
 
         const defaultPrompt = `You are a helpful business assistant.
@@ -143,9 +187,9 @@ Answer:`
                 flow: context?.flow || "customer",
                 llmConfig: context?.llmConfig,
             })
-            return text || formatted
+            return setCachedResult(cacheKey, text || formatted, CACHE_TTL_MS)
         } catch {
-            return formatted
+            return setCachedResult(cacheKey, formatted, CACHE_TTL_MS)
         }
     } catch (err) {
         logger.error({ err }, "genericRagTool: execute failed")

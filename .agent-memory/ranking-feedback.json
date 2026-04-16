@@ -1,0 +1,27 @@
+{
+  "files": {
+    "ARCHITECTURE.md": {
+      "path": "ARCHITECTURE.md",
+      "useCount": 6,
+      "editCount": 0,
+      "lastUsed": "2026-04-05T16:07:28.786Z",
+      "score": 26.490810937499997
+    },
+    "agents/support.yml": {
+      "path": "agents/support.yml",
+      "useCount": 6,
+      "editCount": 0,
+      "lastUsed": "2026-04-05T16:07:28.786Z",
+      "score": 26.490810937499997
+    },
+    "agents/support/faq.yml": {
+      "path": "agents/support/faq.yml",
+      "useCount": 6,
+      "editCount": 0,
+      "lastUsed": "2026-04-05T16:07:28.786Z",
+      "score": 26.490810937499997
+    }
+  },
+  "totalTasks": 6,
+  "updatedAt": "2026-04-05T16:07:28.786Z"
+}

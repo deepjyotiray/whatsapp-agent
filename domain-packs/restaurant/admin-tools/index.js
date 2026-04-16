@@ -43,15 +43,54 @@ const toolDefinitions = [
 
 // ── Tool implementations ──────────────────────────────────────────────────────
 
+function hasColumn(db, tableName, columnName) {
+    return db.prepare(`PRAGMA table_info("${tableName}")`).all().some(col => col.name === columnName)
+}
+
+function ensureExpensesSchema(db) {
+    const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get("expenses")
+    if (!tableExists) {
+        db.exec(`
+            CREATE TABLE expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_date TEXT NOT NULL,
+                expense INTEGER DEFAULT 0,
+                income INTEGER DEFAULT 0,
+                heading TEXT,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `)
+    }
+
+    if (!hasColumn(db, "expenses", "created_at")) {
+        db.exec("ALTER TABLE expenses ADD COLUMN created_at DATETIME")
+    }
+
+    db.exec(`
+        UPDATE expenses
+        SET created_at = CASE
+            WHEN entry_date LIKE '__/__/____'
+                THEN substr(entry_date, 7, 4) || '-' || substr(entry_date, 4, 2) || '-' || substr(entry_date, 1, 2) || ' 00:00:00'
+            ELSE CURRENT_TIMESTAMP
+        END
+        WHERE created_at IS NULL OR TRIM(CAST(created_at AS TEXT)) = ''
+    `)
+
+    db.exec("CREATE INDEX IF NOT EXISTS idx_expenses_entry_date ON expenses(entry_date)")
+    db.exec("CREATE INDEX IF NOT EXISTS idx_expenses_created_at ON expenses(created_at)")
+}
+
 function addExpense({ heading, expense = 0, income = 0, notes = "", entry_date }, dbPath) {
     const db = new Database(dbPath)
     try {
+        ensureExpensesSchema(db)
         const date = entry_date || (() => {
             const d = new Date()
             return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`
         })()
         const result = db.prepare(
-            "INSERT INTO expenses (entry_date, expense, income, heading, notes) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO expenses (entry_date, expense, income, heading, notes, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))"
         ).run(date, expense, income, heading, notes)
         return `✅ Expense added (id:${result.lastInsertRowid}): ${heading} | expense:₹${expense} income:₹${income} | date:${date}`
     } catch (err) {
@@ -123,7 +162,8 @@ const visionPrompt = 'Extract all expense and income entries from this image. Re
 function insertVisionEntries(entries, dbPath) {
     const today = (() => { const d = new Date(); return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}` })()
     const db = new Database(dbPath)
-    const stmt = db.prepare("INSERT INTO expenses (entry_date, expense, income, heading, notes) VALUES (?, ?, ?, ?, ?)")
+    ensureExpensesSchema(db)
+    const stmt = db.prepare("INSERT INTO expenses (entry_date, expense, income, heading, notes, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))")
     const inserted = []
     try {
         for (const e of entries) {
@@ -134,4 +174,31 @@ function insertVisionEntries(entries, dbPath) {
     return inserted
 }
 
-module.exports = { toolDefinitions, dispatch, buildAdminContext, visionPrompt, insertVisionEntries }
+function listMonthlyExpenses(dbPath, month) {
+    const db = new Database(dbPath)
+    try {
+        ensureExpensesSchema(db)
+        const now = new Date()
+        const resolvedMonth = /^\d{4}-\d{2}$/.test(String(month || ""))
+            ? String(month)
+            : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+        const rows = db.prepare(`
+            SELECT id, entry_date, expense, income, heading, notes, created_at
+            FROM expenses
+            WHERE substr(entry_date, 7, 4) || '-' || substr(entry_date, 4, 2) = ?
+            ORDER BY substr(entry_date, 7, 4) || '-' || substr(entry_date, 4, 2) || '-' || substr(entry_date, 1, 2) DESC,
+                     created_at DESC,
+                     id DESC
+        `).all(resolvedMonth)
+        const totals = rows.reduce((acc, row) => {
+            acc.expense += Number(row.expense) || 0
+            acc.income += Number(row.income) || 0
+            return acc
+        }, { expense: 0, income: 0 })
+        return { month: resolvedMonth, rows, totals }
+    } finally {
+        db.close()
+    }
+}
+
+module.exports = { toolDefinitions, dispatch, buildAdminContext, visionPrompt, insertVisionEntries, ensureExpensesSchema, listMonthlyExpenses }

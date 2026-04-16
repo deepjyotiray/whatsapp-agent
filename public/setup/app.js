@@ -1,3 +1,7 @@
+function loginUrl() {
+  return `/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`
+}
+
 async function api(url, method = "GET", body) {
   const res = await fetch(url, {
     method,
@@ -5,7 +9,7 @@ async function api(url, method = "GET", body) {
     body: body ? JSON.stringify(body) : undefined,
   })
   if (res.status === 401) {
-    window.location.href = "/login"
+    window.location.href = loginUrl()
     throw new Error("Unauthorized")
   }
   const data = await res.json()

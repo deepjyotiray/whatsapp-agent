@@ -21,22 +21,177 @@
           <button class="btn btn-primary" id="reload-btn">↻ Hot-Reload Agent</button>
           <a class="btn btn-ghost" href="/profile">Edit Business Profile →</a>
           <a class="btn btn-ghost" href="/chat">Open Chat Sandbox →</a>
+          <a class="btn btn-ghost" href="/agent-chat">Open Agent Chat →</a>
           <a class="btn btn-ghost" href="/admin">Run Admin Task →</a>
           <a class="btn btn-ghost" href="/tools">Manage Agent Tools →</a>
         </div>
         <div class="status-box" id="action-status" style="margin-top:12px"></div>
       </div>
     </div>
+    <div class="card">
+      <div class="card-head"><h3>Flow Truth</h3></div>
+      <div id="flow-truth" style="display:grid; gap:12px">
+        <div class="subtle">Loading live flow capabilities…</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h3>Monthly Expenses</h3>
+        <div class="btn-group" style="align-items:center">
+          <label class="field" style="min-width:160px">
+            <span>Month</span>
+            <input id="expense-month" type="month">
+          </label>
+          <button class="btn btn-ghost btn-sm" id="expense-refresh">Refresh</button>
+        </div>
+      </div>
+      <div class="status-box" id="expense-summary">Loading…</div>
+      <div class="data-table-shell" style="margin-top:12px">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Entry Date</th>
+              <th>Heading</th>
+              <th>Expense</th>
+              <th>Income</th>
+              <th>Added At</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="expense-rows">
+            <tr><td colspan="6" class="subtle">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </main>
   <script src="/setup/shared.js"></script>
   <script>
     buildShell("dashboard")
+
+    function currentMonthValue() {
+      const now = new Date()
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
+    }
+
+    function formatAddedAt(raw) {
+      return raw || "—"
+    }
+
+    function statusBadge(status) {
+      var palette = {
+        pass: { bg: "rgba(27, 135, 60, 0.12)", fg: "#1b873c", label: "PASS" },
+        warn: { bg: "rgba(184, 120, 0, 0.12)", fg: "#a36600", label: "WARN" },
+        fail: { bg: "rgba(181, 44, 44, 0.12)", fg: "#b52c2c", label: "FAIL" },
+        unknown: { bg: "rgba(104, 112, 125, 0.12)", fg: "#56606d", label: "UNKNOWN" }
+      }
+      var tone = palette[status] || palette.unknown
+      return `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:58px;padding:3px 8px;border-radius:999px;background:${tone.bg};color:${tone.fg};font-size:0.72rem;font-weight:700;letter-spacing:0.04em">${tone.label}</span>`
+    }
+
+    function renderProbeList(probes) {
+      if (!Array.isArray(probes) || !probes.length) return '<div class="subtle">No probes recorded.</div>'
+      return probes.map(function(probe) {
+        var icon = probe.ok ? "✓" : (probe.severity === "warn" ? "!" : "✗")
+        return `<div style="display:grid;grid-template-columns:20px 1fr;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
+          <div style="font-weight:700">${icon}</div>
+          <div>
+            <div style="font-weight:600">${esc(probe.name || "probe")}</div>
+            <div class="subtle" style="margin-top:2px">${esc(probe.detail || "")}</div>
+          </div>
+        </div>`
+      }).join("")
+    }
+
+    function renderTools(tools) {
+      if (!Array.isArray(tools) || !tools.length) return '<div class="subtle">No tools resolved.</div>'
+      return tools.map(function(tool) {
+        var line = tool.type ? `${tool.name} · ${tool.type}` : tool.name
+        var tail = tool.handlerReady === false
+          ? "handler missing"
+          : (tool.governance && !tool.governance.allowed ? `blocked: ${tool.governance.reason}` : (tool.governance ? `${tool.governance.category || "tool"} / ${tool.governance.risk || "unknown"}` : "ready"))
+        return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)">
+          <div style="font-weight:600">${esc(line)}</div>
+          <div class="subtle" style="margin-top:2px">${esc(tail)}</div>
+        </div>`
+      }).join("")
+    }
+
+    function renderFlowTruth(snapshot) {
+      var root = $("flow-truth")
+      if (!snapshot || !snapshot.flows) {
+        root.innerHTML = '<div class="subtle">Flow capability snapshot unavailable.</div>'
+        return
+      }
+      var flows = ["customer", "admin", "agent"].map(function(name) {
+        var flow = snapshot.flows[name] || {}
+        var toolCount = Array.isArray(flow.tools) ? flow.tools.length : ((flow.runtimeTools || []).length || 0)
+        var routeCount = Array.isArray(flow.routing) ? flow.routing.length : 0
+        var backend = flow.backend || "direct"
+        var truthSources = Array.isArray(flow.truthSources) && flow.truthSources.length
+          ? flow.truthSources.join(", ")
+          : "runtime snapshot"
+        return `<section style="border:1px solid var(--border);border-radius:14px;padding:14px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02))">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+            <div>
+              <h4 style="margin:0;text-transform:capitalize">${esc(name)} Flow</h4>
+              <div class="subtle" style="margin-top:4px">Backend: ${esc(backend)} · Tools: ${esc(String(toolCount))}${routeCount ? ` · Routed intents: ${esc(String(routeCount))}` : ""}</div>
+            </div>
+            ${statusBadge(flow.status)}
+          </div>
+          <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px;margin-top:12px">
+            <div>
+              <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px">Effective Tools</div>
+              <div style="display:grid;gap:8px">${renderTools(flow.tools || flow.runtimeTools || [])}</div>
+            </div>
+            <div>
+              <div style="font-size:0.75rem;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:8px">Smoke Checks</div>
+              <div style="display:grid;gap:8px">${renderProbeList(flow.probes || [])}</div>
+            </div>
+          </div>
+          <div class="subtle" style="margin-top:12px">Truth sources: ${esc(truthSources)}</div>
+        </section>`
+      }).join("")
+      var pack = snapshot.domainPack
+        ? `<div class="subtle" style="margin-bottom:12px">Domain pack: ${esc(snapshot.domainPack.name)} (${esc(snapshot.domainPack.domain || "unknown")})</div>`
+        : '<div class="subtle" style="margin-bottom:12px">No domain pack attached to this workspace.</div>'
+      root.innerHTML = pack + flows
+    }
+
+    async function loadMonthlyExpenses() {
+      const month = $("expense-month").value || currentMonthValue()
+      setText("expense-summary", "Loading monthly expenses…")
+      try {
+        const d = await api(ws(`/setup/expenses/monthly?month=${encodeURIComponent(month)}`))
+        const rows = d.rows || []
+        const totalExpense = Number(d.totals?.expense || 0)
+        const totalIncome = Number(d.totals?.income || 0)
+        setText("expense-summary", `${d.month} · ${rows.length} entries · Expense ${totalExpense} · Income ${totalIncome}`)
+        $("expense-rows").innerHTML = rows.length
+          ? rows.map(row => `
+              <tr>
+                <td>${esc(row.entry_date || "—")}</td>
+                <td>${esc(row.heading || "—")}</td>
+                <td class="numeric">${esc(String(row.expense || 0))}</td>
+                <td class="numeric">${esc(String(row.income || 0))}</td>
+                <td>${esc(formatAddedAt(row.created_at))}</td>
+                <td>${esc(row.notes || "—")}</td>
+              </tr>
+            `).join("")
+          : `<tr><td colspan="6" class="subtle">No expense entries for ${esc(month)}.</td></tr>`
+      } catch (e) {
+        setText("expense-summary", "Error: " + e.message)
+        $("expense-rows").innerHTML = `<tr><td colspan="6" class="subtle">Unable to load monthly expenses.</td></tr>`
+      }
+    }
+
     async function load() {
       try {
-        const [h, profile, gov] = await Promise.all([
+        const [h, profile, gov, capabilities] = await Promise.all([
           api("/health"),
           api(ws("/setup/profile")),
           api(ws("/setup/governance")),
+          api(ws("/setup/flow-capabilities")),
         ])
         $("health-out").textContent = JSON.stringify(h, null, 2)
         const p = profile.profile || {}
@@ -54,10 +209,17 @@
           <div class="stat-card"><div class="stat-label">Workspace</div><div class="stat-value">${esc(activeWorkspace)}</div></div>
           <div class="stat-card"><div class="stat-label">Governed Tools</div><div class="stat-value">${toolCount}</div></div>
           <div class="stat-card"><div class="stat-label">Workers</div><div class="stat-value">${workerCount}</div></div>`
-      } catch (e) { $("health-out").textContent = "Error: " + e.message }
+        renderFlowTruth(capabilities)
+        await loadMonthlyExpenses()
+      } catch (e) {
+        $("health-out").textContent = "Error: " + e.message
+        $("flow-truth").innerHTML = `<div class="subtle">Error: ${esc(e.message)}</div>`
+      }
     }
     window.onWorkspaceChange = load
     $("refresh-btn").addEventListener("click", load)
+    $("expense-refresh").addEventListener("click", loadMonthlyExpenses)
+    $("expense-month").addEventListener("change", loadMonthlyExpenses)
     $("reload-btn").addEventListener("click", async () => {
       setText("action-status", "Reloading…")
       try {
@@ -66,6 +228,7 @@
         load()
       } catch (e) { setText("action-status", "✗ " + e.message) }
     })
+    $("expense-month").value = currentMonthValue()
     initWorkspace().then(load)
   </script>
 </body></html>

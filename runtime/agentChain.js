@@ -19,6 +19,8 @@ const { buildCustomerBackendMessages, LIGHT_BACKEND_INTENTS, getCachedContext, s
 const { executeCustomerFlow }            = require("./customerFlow")
 const { validateCustomerBackendResponse } = require("./customerResponseGuard")
 const { recordCustomerOutcome }          = require("./customerOutcome")
+const { deriveCustomerBackendOptions, transformCustomerBackendResponse } = require("./customerBackendPipeline")
+const { runCustomerBackendEnsemble }     = require("./customerBackendEnsemble")
 const { loadProfile }                    = require("../setup/profileService")
 const { loadNotes }                      = require("../core/dataModelNotes")
 const { buildDbContext, getDbSchema, selectRelevantTables } = require("../gateway/admin")
@@ -87,11 +89,49 @@ async function answerCustomerViaConfiguredMode(resolvedRequest, phone, manifest,
         ragHints,
         policyContext,
     })
-    logger.info({ phone, intent, lightContext: useLightContext, messageCount: messages.length }, "perf: customer backend request prepared")
+    const tuning = deriveCustomerBackendOptions({
+        execution: flowCfg.execution,
+        message,
+        routedIntent,
+        conversationState: activeConversationState,
+        history,
+    })
+    const finalMessages = tuning.instructionHint
+        ? [{ role: "system", content: `BACKEND STYLE OVERRIDE:\n${tuning.instructionHint}` }, ...messages]
+        : messages
+    logger.info({
+        phone,
+        intent,
+        lightContext: useLightContext,
+        messageCount: finalMessages.length,
+        tuningProfile: tuning.profile,
+    }, "perf: customer backend request prepared")
+    const requestOptions = {
+        flow: "customer",
+        llmConfig: flowCfg,
+        phone,
+        ...tuning.modelOptions,
+    }
     const llmStart = Date.now()
-    const response = await complete(messages, { flow: "customer", llmConfig: flowCfg, phone })
+    const ensemble = await runCustomerBackendEnsemble({
+        messages: finalMessages,
+        flowCfg,
+        complete,
+        baseOptions: requestOptions,
+    })
+    const response = ensemble.used
+        ? ensemble.response
+        : await complete(finalMessages, requestOptions)
     logger.info({ phone, intent, durationMs: Date.now() - llmStart }, "perf: customer backend completion")
-    return response || manifest.agent.error_message || "I'm sorry, I couldn't process that right now."
+    return {
+        response: response || manifest.agent.error_message || "I'm sorry, I couldn't process that right now.",
+        pipeline: {
+            tuningProfile: tuning.profile,
+            instructionHint: tuning.instructionHint,
+            modelOptions: tuning.modelOptions,
+            ensemble,
+        },
+    }
 }
 
 class AgentChain {
@@ -171,7 +211,10 @@ class AgentChain {
             })
 
             if (outcome.route === "customer_backend") {
-                const guardResult = validateCustomerBackendResponse(outcome.response, {
+                const transformed = transformCustomerBackendResponse(outcome.response?.response || outcome.response, {
+                    execution: outcome.executionConfig,
+                })
+                const guardResult = validateCustomerBackendResponse(transformed.response, {
                     execution: outcome.executionConfig,
                     fallback: this._manifest.agent.error_message || "I'm sorry, I couldn't process that right now.",
                 })
@@ -202,6 +245,11 @@ class AgentChain {
                         strategy: outcome.executionConfig?.strategy || "auto",
                         policy: outcome.policy?.reason || "allowed",
                         responseGuardIssues: guardResult.issues,
+                        tuningProfile: outcome.response?.pipeline?.tuningProfile || null,
+                        responseTransforms: transformed.applied,
+                        ensembleStrategy: outcome.response?.pipeline?.ensemble?.used ? outcome.response.pipeline.ensemble.strategy : null,
+                        ensembleWinner: outcome.response?.pipeline?.ensemble?.winner || null,
+                        ensembleCandidates: outcome.response?.pipeline?.ensemble?.candidates || [],
                     },
                 })
                 return response

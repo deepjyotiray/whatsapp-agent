@@ -1,0 +1,22 @@
+{
+  "id": "57470267-714e-43e1-9b5f-e7824c536e91",
+  "title": "ram",
+  "workspaceRoot": "/Users/deepjyotiray/secure-agent",
+  "plannerBackend": "electron_chatgpt",
+  "createdAt": "2026-04-05T16:07:13.325Z",
+  "updatedAt": "2026-04-05T16:07:28.789Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "ram",
+      "id": "b0261c9e-0124-4c98-a12d-fffeed955777",
+      "timestamp": "2026-04-05T16:07:13.335Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Answer: ram is not enough context to answer anything meaningful about this codebase.\n\n\nFrom the repo map, this project is a workspace-aware business assistant with customer/admin/agent flows.\n\n\nCore runtime path: sanitize → build workspace/customer context → route intent → apply policy → execute backend/tool → guard response.\n\n\nLikely architecture split:\n\n\ncore/workspace.js → workspace isolation/config\n\n\nsetup/profileService.js → business profile source of truth\n\n\nruntime/customerFlow.js → customer request pipeline\n\n\nruntime/agentChain.js → orchestration/LLM/tool chain\n\n\ngateway/customerRouter.js → intent routing\n\n\n\n\nagents/support.yml defines a support agent:\n\n\nskip_domain_gate: true → support likely bypasses domain filtering\n\n\none intent: support → tool support_faq\n\n\ntool uses FAQ YAML + SQLite orders DB\n\n\nescalation via trigger phrases + phone number\n\n\n\n\nIf by “ram” you mea\n\n<details><summary>🔍 Thinking</summary>\n\n[00:00] Gathering context…\n[00:00] Found 3 files, keywords: [ram]\n[00:01] Repo map: 1 lines\n[00:15] Response received (889 chars)\n[00:15] Done (15s)\n\n⏱️ 15s total\n\n</details>",
+      "id": "d6a2a8e4-ceb2-49ed-b3b5-5e5640a8eda6",
+      "timestamp": "2026-04-05T16:07:28.789Z"
+    }
+  ]
+}

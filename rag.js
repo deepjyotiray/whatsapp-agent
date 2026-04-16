@@ -12,7 +12,14 @@ const TOKEN_SYNONYMS = {
     sweets: "sweet",
     sweetdish: "sweet",
     sweetdishes: "sweet",
+    beverage: "drink",
+    beverages: "drink",
+    drinks: "drink",
+    tea: "chai",
 }
+const CACHE_TTL_MS = 60 * 1000
+const EMPTY_CACHE_TTL_MS = 10 * 60 * 1000
+const _contextCache = new Map()
 
 function normalizeToken(word = "") {
     const lowered = String(word || "").toLowerCase().trim()
@@ -31,6 +38,31 @@ function normalizeWords(query = "") {
 
 function tokenize(text = "") {
     return new Set(normalizeWords(text))
+}
+
+function cacheKey(query, filter = {}) {
+    return JSON.stringify({
+        query: normalizeWords(query),
+        filter,
+    })
+}
+
+function getCached(key) {
+    const entry = _contextCache.get(key)
+    if (!entry) return null
+    if (Date.now() > entry.expiresAt) {
+        _contextCache.delete(key)
+        return null
+    }
+    return entry.value
+}
+
+function setCached(key, value, ttlMs) {
+    _contextCache.set(key, {
+        value,
+        expiresAt: Date.now() + ttlMs,
+    })
+    return value
 }
 
 function scoreRow(row, words) {
@@ -53,6 +85,10 @@ function scoreRow(row, words) {
 }
 
 async function retrieveContext(query, filter = {}) {
+    const key = cacheKey(query, filter)
+    const cached = getCached(key)
+    if (cached) return cached
+
     const db = await lancedb.connect("./vectordb")
     const table = await db.openTable("restaurant")
 
@@ -82,10 +118,10 @@ async function retrieveContext(query, filter = {}) {
     }
 
     if (!results.length) {
-        return "Sorry, nothing matched your query."
+        return setCached(key, "Sorry, nothing matched your query.", EMPTY_CACHE_TTL_MS)
     }
 
-    return results.map(r => r.text).join("\n\n---\n\n")
+    return setCached(key, results.map(r => r.text).join("\n\n---\n\n"), CACHE_TTL_MS)
 }
 
 module.exports = { retrieveContext }

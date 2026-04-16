@@ -14,6 +14,15 @@
     "port": 3001,
     "secret": "change-this-secret"
   },
+  "setup": {
+    "hosts": "agent.healthymealspot.com,localhost",
+        "username": "linkedin",
+    "password": "community",
+    "brand": "SecureAI",
+    "login_title": "Sign in to SecureAI",
+    "login_lede": "Use your workspace credentials to continue.",
+    "login_submit": "Continue",
+  },
   "admin": {
     "number": "91XXXXXXXXXX",
     "keyword": "your-keyword",
@@ -27,31 +36,59 @@
   },
   "flows": {
     "customer": {
-      "backend": "openclaw",
+      "backend": "godmod3",
       "llm": {
         "provider": "openai",
-        "model": "gpt-4o-mini",
-        "api_key": "sk-your-openai-key-here"
+        "model": "ultraplinian/fast",
+        "api_key": "godmode-api-key-if-auth-enabled"
       },
+      "endpoint": "http://127.0.0.1:7860",
       "backend_config": {
-        "command": "openclaw",
-        "timeout": 90
+        "openrouter_api_key": "sk-or-v1-your-openrouter-key-if-server-does-not-have-it",
+        "timeout": 90,
+        "godmode_enabled": true,
+        "autotune": true,
+        "strategy": "adaptive",
+        "parseltongue": true,
+        "parseltongue_technique": "leetspeak",
+        "parseltongue_intensity": "medium",
+        "stm_modules": ["hedge_reducer", "direct_mode"],
+        "liquid": true,
+        "liquid_min_delta": 8,
+        "stream": false
       },
       "execution": {
-        "strategy": "auto",
-        "tool_intents": ["support", "place_order"],
-        "backend_intents": ["general_chat", "greet"],
+        "strategy": "backend_first",
+        "tool_intents": ["support", "place_order", "order_status", "show_menu", "policy_info"],
+        "backend_intents": ["general_chat"],
         "backend_capabilities": {
           "conversational": true,
           "structured": false,
-          "memory": true,
+          "memory": false,
           "handoffs": false,
           "structured_output": false
         },
         "response_policy": {
-          "max_chars": 1200,
+          "max_chars": 1400,
           "strip_markdown": false,
-          "disallow_patterns": ["system prompt", "internal policy"]
+          "disallow_patterns": ["system prompt", "internal policy", "hidden instructions"]
+        },
+        "backend_tuning": {
+          "enabled": true,
+          "max_tokens_cap": 320,
+          "temperature_floor": 0.15,
+          "temperature_ceiling": 0.9
+        },
+        "backend_ensemble": {
+          "enabled": false,
+          "strategy": "race",
+          "models": [],
+          "judge_model": ""
+        },
+        "response_transforms": {
+          "hedge_reducer": true,
+          "direct_mode": true,
+          "list_compaction": true
         }
       }
     }

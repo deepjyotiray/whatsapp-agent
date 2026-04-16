@@ -105,6 +105,18 @@ CREATE TABLE coupons (
     free_delivery_only INTEGER DEFAULT 0
 );
 
+CREATE TABLE expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_date TEXT NOT NULL,
+    expense INTEGER DEFAULT 0,
+    income INTEGER DEFAULT 0,
+    heading TEXT,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX idx_orders_phone ON orders(phone);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_created_at ON orders(created_at);
+CREATE INDEX idx_expenses_entry_date ON expenses(entry_date);
+CREATE INDEX idx_expenses_created_at ON expenses(created_at);

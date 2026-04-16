@@ -65,6 +65,20 @@ function ensureDir(filePath) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
 }
 
+function resolveProfilePathValue(value = "") {
+    const raw = String(value || "").trim()
+    if (!raw) return ""
+    return path.isAbsolute(raw) ? raw : path.resolve(ROOT_DIR, raw)
+}
+
+function resolveProfilePaths(profile = {}) {
+    return {
+        ...profile,
+        dbPath: resolveProfilePathValue(profile.dbPath),
+        ticketsFile: resolveProfilePathValue(profile.ticketsFile),
+    }
+}
+
 function profilePath(workspaceId) {
     return workspacePath(workspaceId, "profile.json")
 }
@@ -72,11 +86,11 @@ function profilePath(workspaceId) {
 function loadProfile(workspaceId = getActiveWorkspace()) {
     migrateLegacyProfile(DEFAULT_PROFILE)
     const targetPath = profilePath(workspaceId)
-    if (!fs.existsSync(targetPath)) return { ...DEFAULT_PROFILE, workspaceId }
+    if (!fs.existsSync(targetPath)) return resolveProfilePaths({ ...DEFAULT_PROFILE, workspaceId })
     try {
-        return { ...DEFAULT_PROFILE, workspaceId, ...JSON.parse(fs.readFileSync(targetPath, "utf8")) }
+        return resolveProfilePaths({ ...DEFAULT_PROFILE, workspaceId, ...JSON.parse(fs.readFileSync(targetPath, "utf8")) })
     } catch {
-        return { ...DEFAULT_PROFILE, workspaceId }
+        return resolveProfilePaths({ ...DEFAULT_PROFILE, workspaceId })
     }
 }
 

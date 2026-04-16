@@ -6,13 +6,17 @@ let _history = []
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
+function loginUrl() {
+    return `/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`
+}
+
 async function api(url, method = "GET", body) {
     const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
     })
-    if (res.status === 401) { window.location.href = "/login"; throw new Error("Unauthorized") }
+    if (res.status === 401) { window.location.href = loginUrl(); throw new Error("Unauthorized") }
     return res.json()
 }
 

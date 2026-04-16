@@ -40,15 +40,34 @@ function buildContext(flow, context) {
     }
 
     if (context.conversationState && typeof context.conversationState === "object") {
-        lines.push("=== CONVERSATION STATE ===")
-        lines.push(JSON.stringify(context.conversationState, null, 2))
-        lines.push("")
+        const s = context.conversationState
+        const parts = []
+        if (s.task)        parts.push(`task: ${s.task}`)
+        if (s.topic)       parts.push(`topic: ${s.topic}`)
+        if (s.lastIntent)  parts.push(`lastIntent: ${s.lastIntent}`)
+        if (s.selection)   parts.push(`selection: ${JSON.stringify(s.selection)}`)
+        if (s.pending)     parts.push(`pending: ${JSON.stringify(s.pending)}`)
+        if (parts.length) {
+            lines.push("=== CONVERSATION STATE ===")
+            lines.push(parts.join("\n"))
+            lines.push("")
+        }
     }
 
     if (context.resolvedRequest && typeof context.resolvedRequest === "object") {
-        lines.push("=== RESOLVED REQUEST ===")
-        lines.push(JSON.stringify(context.resolvedRequest, null, 2))
-        lines.push("")
+        const r = context.resolvedRequest
+        const parts = []
+        if (r.wasRewritten)         parts.push(`rewritten: ${r.effectiveMessage}`)
+        if (r.followUpReason)       parts.push(`followUp: ${r.followUpReason}`)
+        if (r.activeTopic)          parts.push(`activeTopic: ${r.activeTopic}`)
+        const filters = r.appliedFilters || {}
+        const activeFilters = Object.entries(filters).filter(([, v]) => v != null).map(([k, v]) => `${k}=${v}`).join(", ")
+        if (activeFilters)          parts.push(`filters: ${activeFilters}`)
+        if (parts.length) {
+            lines.push("=== RESOLVED REQUEST ===")
+            lines.push(parts.join("\n"))
+            lines.push("")
+        }
     }
 
     return lines.join("\n")

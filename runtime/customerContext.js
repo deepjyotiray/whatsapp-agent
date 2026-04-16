@@ -4,7 +4,7 @@ const { prepareRequest } = require("./contextPipeline")
 
 const LIGHT_BACKEND_INTENTS = new Set(["greet", "general_chat"])
 const _dbContextCache = new Map()
-const CACHE_TTL_MS = 60 * 1000
+const CACHE_TTL_MS = 30 * 60 * 1000
 
 function normalizeText(value = "") {
     return String(value || "").trim().replace(/\s+/g, " ")

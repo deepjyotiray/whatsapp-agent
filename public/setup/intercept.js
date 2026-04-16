@@ -7,6 +7,10 @@ const STATUS_LABELS = { pass: "PASS", fail: "FAIL", override: "OVERRIDE", skippe
 let _selected = null
 let _pollTimer = null
 
+function loginUrl() {
+    return `/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`
+}
+
 // ── API ──────────────────────────────────────────────────────────────────────
 
 async function api(url, method = "GET", body) {
@@ -15,7 +19,7 @@ async function api(url, method = "GET", body) {
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
     })
-    if (res.status === 401) { window.location.href = "/login"; throw new Error("Unauthorized") }
+    if (res.status === 401) { window.location.href = loginUrl(); throw new Error("Unauthorized") }
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
     return data

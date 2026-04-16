@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SecureAI Demo</title>
+  <link rel="stylesheet" href="/demo/demo.css">
+</head>
+<body>
+  <div class="aurora aurora-a"></div>
+  <div class="aurora aurora-b"></div>
+  <main class="shell">
+    <section class="experience-grid">
+      <article class="chat-section">
+          <header class="chat-header">
+            <p class="eyebrow">Healthy Meal Spot x SecureAI</p>
+            <h2>Live AI governance demo for customer, admin, and agent flows.</h2>
+            <p class="chat-tagline" id="hero-lede-inline">Type a request, or start with a sample to preview how SecureAI handles it.</p>
+          </header>
+          <section class="chat-window">
+            <div class="phone">
+              <div class="phone-topbar">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <strong id="stage-title">Flow Animator</strong>
+              </div>
+              <div class="message-stack" id="message-stack"></div>
+            </div>
+          </section>
+          <footer class="chat-input">
+            <label class="input-shell">
+              <span>Type a prompt or choose a sample</span>
+              <textarea id="scenario-input" rows="3" placeholder="Example: Show me high-protein meals under ₹250"></textarea>
+            </label>
+            <div class="composer-actions">
+              <button class="primary-btn" id="run-scenario">Send</button>
+              <button class="ghost-btn" id="cycle-scenarios">Cycle Demo</button>
+              <button class="ghost-btn" id="refresh-runtime">Refresh Runtime</button>
+            </div>
+          </footer>
+      </article>
+
+      <aside class="side-panel">
+        <div class="side-scroll">
+          <section class="side-card">
+            <h3>Live Runtime</h3>
+            <div class="runtime-strip" id="runtime-strip">
+              <article class="runtime-card">
+                <span>Runtime</span>
+                <strong id="runtime-health">Loading…</strong>
+              </article>
+              <article class="runtime-card">
+                <span>Domain Pack</span>
+                <strong id="runtime-pack">Loading…</strong>
+              </article>
+              <article class="runtime-card">
+                <span>Workspace</span>
+                <strong id="runtime-workspace">Loading…</strong>
+              </article>
+              <article class="runtime-card">
+                <span>Generated</span>
+                <strong id="runtime-time">Loading…</strong>
+              </article>
+            </div>
+          </section>
+
+          <section class="side-card modes-panel">
+            <h3>Flows</h3>
+            <button class="mode-btn" data-scenario="customer_menu">Customer Flow</button>
+            <button class="mode-btn" data-scenario="admin_metrics">Admin Flow</button>
+            <button class="mode-btn" data-scenario="agent_update">Agent Flow</button>
+          </section>
+
+          <section class="side-card">
+            <h3>Samples</h3>
+            <div class="sample-row">
+              <button class="chip" data-scenario="customer_menu">Menu search</button>
+              <button class="chip" data-scenario="admin_metrics">Metrics question</button>
+              <button class="chip" data-scenario="agent_update">Order update</button>
+            </div>
+          </section>
+
+          <section class="side-card analysis-card">
+            <div class="analysis-topline">
+              <span class="analysis-label">Predicted flow</span>
+              <strong id="analysis-flow">Customer</strong>
+            </div>
+            <p id="analysis-summary">Waiting for input.</p>
+            <div class="analysis-meta" id="analysis-meta"></div>
+          </section>
+
+          <section class="side-card">
+            <h3>Execution Timeline</h3>
+            <div class="timeline" id="timeline"></div>
+          </section>
+          
+          <section class="side-card">
+            <h3>Flow Truth</h3>
+            <div class="flow-grid" id="flow-grid"></div>
+          </section>
+        </div>
+      </aside>
+    </section>
+  </main>
+  <script>window.__DEMO_META__=window.__DEMO_META__||null;</script>
+  <script src="/demo/demo.js"></script>
+</body>
+</html>

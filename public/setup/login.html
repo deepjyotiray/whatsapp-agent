@@ -8,22 +8,38 @@
 </head>
 <body>
   <main class="login-shell">
-    <section class="login-card">
-      <p class="eyebrow">SecureAI</p>
-      <h1>Sign in to the business agent lab.</h1>
-      <p class="lede">This console previews a secure WhatsApp business agent with a customer-facing assistant and an owner-only OpenClaw-style operator brain.</p>
-      <form id="login-form" class="login-form">
-        <label>
-          <span>Username</span>
-          <input name="username" autocomplete="username" required>
-        </label>
-        <label>
-          <span>Password</span>
-          <input name="password" type="password" autocomplete="current-password" required>
-        </label>
-        <button class="primary" type="submit">Enter SecureAI</button>
-      </form>
-      <div id="login-status" class="status">Use the shared demo credentials to continue.</div>
+    <section class="login-grid">
+      <aside class="login-hero" aria-label="SecureAI welcome">
+        <p class="eyebrow" id="login-brand">SecureAI</p>
+        <h1 id="login-title">SecureAI</h1>
+        <p class="lede" id="login-lede">Private workspace access for your internal AI tools.</p>
+        <div class="login-hero-notes">
+          <div class="login-note">
+            <span class="login-note-kicker">Fast entry</span>
+            <p>Enter your name and continue directly into the workspace.</p>
+          </div>
+          <div class="login-note">
+            <span class="login-note-kicker">Private session</span>
+            <p>Your session stays scoped to this SecureAI environment.</p>
+          </div>
+        </div>
+      </aside>
+
+      <section class="login-card">
+        <div class="login-card-topline">
+          <span class="login-badge">Workspace Access</span>
+          <span class="login-mode" id="login-mode-label">Guest access</span>
+        </div>
+        <div class="login-card-copy">
+          <h2 id="login-card-title">What should we call you?</h2>
+          <p id="login-card-lede">Enter your name to continue.</p>
+        </div>
+        <form id="login-form" class="login-form">
+          <div id="login-fields"></div>
+          <button class="primary login-submit" id="login-submit" type="submit">Continue</button>
+        </form>
+        <div id="login-status" class="status login-status">Loading sign-in options…</div>
+      </section>
     </section>
   </main>
 

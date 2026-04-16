@@ -1,0 +1,34 @@
+{
+  "id": "2049bbe0-1c2b-42bc-b7bc-6dab5fb97e7f",
+  "title": "RAM",
+  "workspaceRoot": "/Users/deepjyotiray/secure-agent",
+  "plannerBackend": "electron_chatgpt",
+  "createdAt": "2026-04-05T16:13:40.167Z",
+  "updatedAt": "2026-04-05T16:13:54.819Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "RAM",
+      "id": "5e31e6a9-1ee7-499c-8afd-4e247b0ab50b",
+      "timestamp": "2026-04-05T16:13:40.176Z"
+    },
+    {
+      "role": "assistant",
+      "content": "`top -l 1 | grep PhysMem`\n```\nPhysMem: 15G used (7061M wired, 4016M compressor), 120M unused.\n```",
+      "id": "4c9fa382-9e5e-46f5-a2d6-d04abc1641e5",
+      "timestamp": "2026-04-05T16:13:42.046Z"
+    },
+    {
+      "role": "user",
+      "content": "list files",
+      "id": "21bb4476-cd52-4735-8bf0-f9d3593a6b69",
+      "timestamp": "2026-04-05T16:13:54.224Z"
+    },
+    {
+      "role": "assistant",
+      "content": "`ls -la`\n```\ntotal 608\ndrwxr-xr-x    54 deepjyotiray  staff    1728 Apr  5 21:21 .\ndrwxr-x---+  150 deepjyotiray  staff    4800 Apr  5 21:43 ..\n-rw-r--r--@    1 deepjyotiray  staff   43012 Mar 28 17:52 .DS_Store\ndrwxr-xr-x@    8 deepjyotiray  staff     256 Apr  5 21:43 .agent-conversations\ndrwxr-xr-x@    6 deepjyotiray  staff     192 Apr  5 21:22 .agent-memory\ndrwxr-xr-x@    2 deepjyotiray  staff      64 Apr  5 21:21 .agent-state\ndrwxr-xr-x@   15 deepjyotiray  staff     480 Apr  3 14:38 .git\n-rw-r--r--@    1 deepjyotiray  staff     308 Mar 21 11:15 .gitignore\ndrwxr-xr-x@    5 deepjyotiray  staff     160 Mar 23 11:10 .idea\ndrwxr-xr-x@   90 deepjyotiray  staff    2880 Mar 16 22:55 .playwright-cli\ndrwxr-xr-x@    7 deepjyotiray  staff     224 Mar 14 15:15 .venv\n-rw-r--r--@    1 deepjyotiray  staff    5406 Mar 28 16:43 ARCHITECTURE.md\n-rw-r--r--@    1 deepjyotiray  staff    4128 Mar 28 16:43 ONBOARDING.md\n-rw-r--r--@    1 deepjyotiray  staff    5661 Mar 29 21:38 README.md\ndrwxr-xr-x@    8 deepjyotiray  staff     256 Mar 23 11:21 agents\ndrwxr-xr-x  1462 deepjyotiray  staff   46784 Apr  5 19:53 auth\ndrwxr-xr-x@    6 deepjyotiray  staff     192 Mar 24 13:46 config\ndrwxr-xr-x@    6 deepjyotiray  staff     192 Mar 24 13:46 core\ndrwxr-xr-x@   11 deepjyotiray  staff     352 Mar 23 11:20 data\ndrwxr-xr-x@    4 deepjyotiray  staff     128 Mar 16 23:10 db\ndrwxr-xr-x@    4 deepjyotiray  staff     128 Mar 20 23:00 domain-packs\ndrwxr-xr-x@    8 deepjyotiray  staff     256 Mar 17 11:09 draft\ndrwxr-xr-x@   17 deepjyotiray  staff     544 Mar 24 13:46 gateway\n-rw-r--r--@    1 deepjyotiray  staff     127 Mar 22 01:34 image_gen_log.txt\n-rw-r--r--@    1 deepjyotiray  staff    1416 Mar 21 00:14 index.js\ndrwxr-xr-x@    5 deepjyotiray  staff     160 Mar 17 09:58 logs\n-rw-r--r--@    1 deepjyotiray  staff    4652 Mar 23 11:29 mlx_server.py\ndrwxr-xr-x   179 deepjyotiray  staff    5728 Mar 22 00:14 node_modules\ndrwxr-xr-x@    3 deepjyotiray  staff      96 Mar 14 15:16 out\ndrwxr-xr-x@    3 deepjyotiray  staff      96 Mar 22 00:21 output\n-rw-r--r--@    1 deepjyotiray  staff  109278 Mar 22 00:14 package-lock.json\n-rw-r--r--@    1 deepjyotiray  staff    1464 Mar 28 23:34 package.json\ndrwxr-xr-x@    4 deepjyotiray  staff     128 Mar 17 09:57 policy\n-rw-r--r--@    1 deepjyotiray  staff      66 Mar 12 23:19 policy.yml\ndrwxr-xr-x@    9 deepjyotiray  staff     288 Mar 24 14:34 providers\ndrwxr-xr-x@    5 deepjyotiray  staff     160 Apr  3 11:54 public\n-rw-r--r--@    1 deepjyotiray  staff    3481 Mar 29 00:14 rag.js\ndrwxr-xr-x@   32 deepjyotiray  staff    1024 Apr  3 12:03 runtime\n-rw-r--r--@    1 deepjyotiray  staff    1105 Mar 24 13:07 server.log\ndrwxr-xr-x@    3 deepjyotiray  staff      96 Mar 28 23:36 services\ndrwxr-xr-x@   10 deepjyotiray  staff     320 Mar 16 23:18 setup\ndrwxr-xr-x@   38 deepjyotiray  staff    1216 Mar 14 15:10 skills\n-rw-r--r--@    1 deepjyotiray  staff   21546 Mar 24 00:22 skills.txt\ndrwxr-xr-x@   20 deepjyotiray  staff     640 Mar 28 23:34 test\ndrwxr-xr-x@   26 deepjyotiray  staff     832 Mar 28 11:20 tmp\n-rw-r--r--@    1 deepjyotiray  staff    9932 Mar 24 11:01 token_usage_reduction.md\ndrwxr-xr-x@   11 deepjyotiray  staff     352 Mar 28 10:32 tools\ndrwxr-xr-x@    4 deepjyotiray  staff     128 Mar 24 13:46 transport\ndrwxr-xr-x@    5 deepjyotiray  staff     160 Mar 24 13:46 transports\ndrwxr-xr-x    13 deepjyotiray  staff     416 Mar 29 17:24 turboQuantForMLX\n-rw-r--r--@    1 deepjyotiray  staff    6830 Mar 23 15:53 vector.js\ndrwxr-xr-x     4 deepjyotiray  staff     128 Mar 23 15:53 vectordb\n-rw-r--r--@    1 deepjyotiray  staff   42884 Mar 23 10:54 whatsapp-agent.postman_collection.json\n-rw-r--r--@    1 deepjyotiray  staff    3726 Mar 12 23:21 whatsapp.js\n```",
+      "id": "cb33ec3b-7bd0-4889-b11c-36e84555d2af",
+      "timestamp": "2026-04-05T16:13:54.819Z"
+    }
+  ]
+}

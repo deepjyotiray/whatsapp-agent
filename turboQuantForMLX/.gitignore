@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+artifacts/
+logs/*.json
+logs/*.log
+mlx_model/

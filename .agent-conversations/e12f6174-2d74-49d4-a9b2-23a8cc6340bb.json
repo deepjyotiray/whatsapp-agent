@@ -1,0 +1,34 @@
+{
+  "id": "e12f6174-2d74-49d4-a9b2-23a8cc6340bb",
+  "title": "hi explain the architecture as how openclaw is integrated in",
+  "workspaceRoot": "/Users/deepjyotiray/secure-agent",
+  "plannerBackend": "electron_chatgpt",
+  "createdAt": "2026-04-05T15:57:32.365Z",
+  "updatedAt": "2026-04-05T15:58:53.969Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi explain the architecture as how openclaw is integrated in which files.",
+      "id": "46726ed8-9cba-4a64-943c-47650c29b892",
+      "timestamp": "2026-04-05T15:57:32.387Z"
+    },
+    {
+      "role": "assistant",
+      "content": "OpenClaw is integrated through the LLM/provider layer, then selected by runtime orchestration.\n\n\nMain execution entry\n\n\nruntime/agentChain.js → answerCustomerViaConfiguredMode(...)\n\n\nReads backend config via getFlowConfig(\"customer\") from ../providers/llm\n\n\nBuilds context (history, DB schema/context, notes, RAG hints), then runs the configured backend path.\n\n\n\n\nLikely OpenClaw execution files\n\n\nruntime/customerBackendPipeline → backend options + response transform\n\n\nruntime/customerBackendEnsemble → multi-backend / ensemble execution\n\n\nproviders/llm → actual OpenClaw/provider binding\n\n\n\n\nRouting / orchestration before OpenClaw\n\n\nruntime/customerFlow.js\n\n\nHandles customer turn lifecycle\n\n\nUses routeCustomerMessage(...)\n\n\nCalls decideCustomerExecution(...) / getCustomerExecutionConfig(...)\n\n\nApplies policy + state before backend execution\n\n\n\n\n\n\nWorkspace-scoped config\n\n\ncore/workspace.js → active workspace\n\n\nsetup/profileService.js → workspace profile / DB path\n\n\n\n\nBottom line\n\n\ncustomerFlow.js decides\n\n\nagentChain.js prepares\n\n\nproviders/llm + backend pipeline/ensemble actually integrate OpenClaw\n\n<details><summary>🔍 Thinking</summary>\n\n[00:00] Gathering context…\n[00:00] Found 3 files, keywords: [explain, architecture, openclaw, integrated]\n[00:00] Repo map: 1 lines\n[00:16] Response received (1392 chars)\n[00:16] Follow-up: runtime/customerFlow.js, runtime/agentChain.js, gateway/customerRouter.js, core/workspace.js\n[00:30] Follow-up received\n[00:30] Done (30s)\n\n⏱️ 30s total\n\n</details>",
+      "id": "f206984e-e63e-4373-a9e8-61a1be073052",
+      "timestamp": "2026-04-05T15:58:02.729Z"
+    },
+    {
+      "role": "user",
+      "content": "check which model is configured for openclaw as of now",
+      "id": "b8816079-96a6-433e-b9a6-d4f8ec573091",
+      "timestamp": "2026-04-05T15:58:29.653Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Current OpenClaw model is not hardcoded here; it is loaded from config/settings.json.\n\n\nHow it’s selected\n\n\nproviders/llm.js → getFlowConfig(\"customer\" | \"admin\" | \"agent\")\n\n\nReads settings.flows[flow].llm\n\n\nIf backend !== \"direct\", provider becomes backend adapter:\n\n\nproviderKey = (cfg.backend && cfg.backend !== \"direct\") ? \"backend\" : (cfg.provider || \"openai\")\n\n\n\n\n\n\nSo “OpenClaw” = backend mode, not a named provider in this file.\n\n\nWhere current model should be\n\n\nconfig/settings.json\n\n\nlikely under one of:\n\n\nflows.customer.llm.model\n\n\nflows.admin.llm.model\n\n\nflows.agent.llm.model\n\n\nor fallback legacy fields\n\n\n\n\n\n\nRouting behavior\n\n\nruntime/flowOrchestrator.js only decides tool vs backend, not which model.\n\n\n\n\nAnswer\n\n\nConfigured OpenClaw model cannot be named from these files alone.\n\n\nThe source of truth is config/settings.json.\n\n<details><summary>🔍 Thinking</summary>\n\n[00:00] Gathering context…\n[00:00] Found 3 files, keywords: [model, configured, openclaw, now]\n[00:00] Repo map: 1 lines\n[00:11] Response received (872 chars)\n[00:11] Follow-up: providers/llm.js, runtime/flowOrchestrator.js, runtime/customerBackendPipeline.js, runtime/customerBackendEnsemble.js\n[00:24] Follow-up received\n[00:24] Done (24s)\n\n⏱️ 24s total\n\n</details>",
+      "id": "27928ad8-7806-4780-bc39-25d64039de0e",
+      "timestamp": "2026-04-05T15:58:53.969Z"
+    }
+  ]
+}

@@ -2,6 +2,12 @@
 "use strict"
 
 let activeWorkspace = "default"
+let setupSession = { authorized: false, username: "", readOnly: false }
+let readOnlyObserver = null
+
+function loginUrl() {
+  return `/login?next=${encodeURIComponent(`${window.location.pathname}${window.location.search}`)}`
+}
 
 async function api(url, method = "GET", body) {
   const res = await fetch(url, {
@@ -9,10 +15,19 @@ async function api(url, method = "GET", body) {
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (res.status === 401) { window.location.href = "/login"; throw new Error("Unauthorized") }
+  if (res.status === 401) { window.location.href = loginUrl(); throw new Error("Unauthorized") }
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
   return data
+}
+
+async function fetchSetupSession() {
+  try {
+    setupSession = await api("/setup/auth/session")
+  } catch (err) {
+    console.error("[setup-session]", err)
+  }
+  return setupSession
 }
 
 function ws(url) {
@@ -29,6 +44,69 @@ function hide(id) { $(id)?.classList.add("hidden") }
 
 function setText(id, t) { const e = $(id); if (e) e.textContent = t }
 
+function isAllowedReadOnlyControl(el) {
+  if (!el) return true
+  if (el.id === "logout-btn" || el.id === "ws-select") return true
+  if (["phone", "chat-mode", "pi-toggle", "msg", "agent-msg", "agent-session-select", "agent-refresh", "pi-close"].includes(el.id)) return true
+  if (el.closest && (el.closest("#chat-form") || el.closest("#agent-form"))) return true
+  if (el.dataset && el.dataset.allowReadonly === "true") return true
+  return false
+}
+
+function lockElementForReadOnly(el) {
+  if (!el || isAllowedReadOnlyControl(el)) return
+  if (el.matches("input, textarea")) {
+    el.readOnly = true
+    el.disabled = true
+    el.setAttribute("aria-disabled", "true")
+    return
+  }
+  if (el.matches("select, button")) {
+    el.disabled = true
+    el.setAttribute("aria-disabled", "true")
+    return
+  }
+}
+
+function applyReadOnlyUI(root = document) {
+  if (!setupSession.readOnly) return
+  document.body.classList.add("setup-read-only")
+
+  const scope = root && typeof root.querySelectorAll === "function" ? root : document
+  scope.querySelectorAll("input, textarea, select, button").forEach(lockElementForReadOnly)
+
+  const topbar = document.querySelector(".topbar-right")
+  if (topbar && !document.getElementById("readonly-indicator")) {
+    const badge = document.createElement("span")
+    badge.id = "readonly-indicator"
+    badge.className = "readonly-indicator"
+    badge.textContent = `Read-only: ${setupSession.username || "account"}`
+    topbar.insertBefore(badge, $("logout-btn"))
+  }
+
+  const page = document.querySelector(".page")
+  if (page && !document.getElementById("readonly-banner")) {
+    const banner = document.createElement("div")
+    banner.id = "readonly-banner"
+    banner.className = "readonly-banner"
+    banner.textContent = "This setup account is read-only. Editing and action controls are disabled."
+    page.insertBefore(banner, page.firstChild)
+  }
+
+  if (!readOnlyObserver) {
+    readOnlyObserver = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        mutation.addedNodes.forEach(node => {
+          if (!(node instanceof Element)) return
+          if (node.matches("input, textarea, select, button")) lockElementForReadOnly(node)
+          applyReadOnlyUI(node)
+        })
+      }
+    })
+    readOnlyObserver.observe(document.body, { childList: true, subtree: true })
+  }
+}
+
 // ── Sidebar + Topbar ─────────────────────────────────────────────────────────
 
 const NAV = [
@@ -36,6 +114,7 @@ const NAV = [
     { id: "dashboard", icon: "▣", label: "Dashboard", href: "/" },
     { id: "profile", icon: "◐", label: "Profile", href: "/profile" },
     { id: "chat", icon: "◑", label: "Chat", href: "/chat" },
+    { id: "agent-chat", icon: "◎", label: "Agent Chat", href: "/agent-chat" },
   ]},
   { group: "Agent Management", items: [
     { id: "admin", icon: "⚙", label: "Admin", href: "/admin" },
@@ -82,6 +161,8 @@ function buildShell(pageId) {
     await api("/setup/logout", "POST", {})
     window.location.href = "/login"
   })
+
+  fetchSetupSession().then(() => applyReadOnlyUI())
 }
 
 async function initWorkspace() {

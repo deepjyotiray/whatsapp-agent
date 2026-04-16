@@ -4,13 +4,13 @@ const { complete } = require("../providers/llm")
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful business assistant.
 You will be given a customer's question and data retrieved from the business database.
-Answer using ONLY the provided data. Be concise and well formatted for WhatsApp.
+Answer using ONLY the provided data. Be well formatted for WhatsApp.
 Do NOT make up information. If nothing matches, say so clearly.
-Only include results directly relevant to what the customer asked.
-If the customer asks whether a category or type is available, answer yes/no and then list all matching items shown in the retrieved data with their exact names and prices.
+Include ALL matching items from the retrieved data — never truncate or summarise the list.
+If the customer asks whether a category or type is available, answer yes/no and then list all matching items with their exact names and prices.
 Never collapse multiple relevant matches into a single example item.`
 
-const MAX_RAG_CHARS = 4000
+const MAX_RAG_CHARS = 12000
 
 async function generateResponse(userQuery, ragData, systemPrompt, options = {}) {
     // fast path: RAG already said nothing matched — no LLM needed
@@ -38,7 +38,7 @@ ${trimmed}
 Answer:`
 
     try {
-        const text = await complete(prompt)
+        const text = await complete(prompt, { flow: "customer" })
         return text || ragData
     } catch {
         return ragData

@@ -1,0 +1,34 @@
+{
+  "id": "c09fb3fe-0c0a-4cb2-bbc0-1e2a4ca5c3c3",
+  "title": "Hi explain the architecture of this service ? and this runs ",
+  "workspaceRoot": "/Users/deepjyotiray/secure-agent",
+  "plannerBackend": "electron_chatgpt",
+  "createdAt": "2026-04-05T15:51:36.002Z",
+  "updatedAt": "2026-04-05T15:53:22.941Z",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hi explain the architecture of this service ? and this runs on which port ?",
+      "id": "0b0bd467-d319-4072-bfbd-c0e42312279c",
+      "timestamp": "2026-04-05T15:51:36.009Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Architecture: A workspace-aware business assistant gateway for customer/admin/agent flows with explicit boundaries between routing, policy, and execution.\n\n\nMain runtime path: sanitize → build workspace/customer context → route intent → apply policy → backend/tool execution → guard response\n\n\nCore modules:\n\n\nWorkspace/config: core/workspace.js, setup/profileService.js\n\n\nCustomer runtime: runtime/customerFlow.js, runtime/agentChain.js\n\n\nRouting: gateway/customerRouter.js, gateway/intentParser.js\n\n\nPolicy/governance: runtime/customerPolicy.js, gateway/policyEngine.js\n\n\nBackend conversational context: runtime/customerContext.js\n\n\n\n\nHow routing works: Heuristics first, then LLM classification if needed, constrained by manifest-defined intents.\n\n\nEntry point: index.js\n\n\nRequires: node index.js --agent <manifest.yml>\n\n\nTransport options: whatsapp (default), http, cli\n\n\n\n\nPort: Not defined in index.js or package.json.\n\n\nLikely configured inside:\n\n\ntransport/api.js\n\n\ntransports/http.js\n\n\n\n\n\n\nMost likely behavior: HTTP console/API starts when using whatsapp transport.\n\n<details><summary>🔍 Thinking</summary>\n\n[00:00] Gathering context…\n[00:00] Found 3 files, keywords: [explain, architecture, service, runs]\n[00:00] Repo map: 1 lines\n[00:14] Response received (1045 chars)\n[00:14] Follow-up: package.json, server.js, index.js\n[00:27] Follow-up received\n[00:27] Done (27s)\n\n⏱️ 27s total\n\n</details>",
+      "id": "651af4c4-75e0-4746-8cfe-44c30e76340d",
+      "timestamp": "2026-04-05T15:52:03.652Z"
+    },
+    {
+      "role": "user",
+      "content": "check all files to find out how openclaw is integrated with it.",
+      "id": "cbb01c19-f70a-4502-a24a-73941bb5ad55",
+      "timestamp": "2026-04-05T15:52:46.189Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Answer: OpenClaw is integrated as a selectable backend conversation path, not as the primary router/policy engine.\n\n\nWhere it plugs in: runtime/customerFlow.js\n\n\nImports:\n\n\ngetFlowConfig from providers/llm\n\n\ndecideCustomerExecution / getCustomerExecutionConfig from flowOrchestrator\n\n\n\n\nThis implies runtime decides whether a customer turn goes to tool flow vs backend flow (e.g. OpenClaw).\n\n\n\n\nWhat OpenClaw receives: runtime/customerContext.js\n\n\nbuildCustomerBackendMessages(...) assembles the backend payload with:\n\n\nsystem prompt\n\n\nbusiness profile facts\n\n\ncustomer profile memory\n\n\nDB context + schema\n\n\nnotes\n\n\nRAG hints\n\n\nconversation history/state\n\n\nresolved request\n\n\npolicy block context\n\n\n\n\n\n\nHow it’s framed: prompt says:\n\n\n“If the configured mode is a backend service, keep this request on that backend path.”\n\n\n\n\nConclusion: OpenClaw is likely configured through LLM/backend provider settings and used after routing + policy, as the governed conversational backend.\n\n<details><summary>🔍 Thinking</summary>\n\n[00:00] Gathering context…\n[00:00] Found 3 files, keywords: [files, openclaw, integrated, it.]\n[00:00] Repo map: 1 lines\n[00:13] Response received (1067 chars)\n[00:13] Follow-up: runtime/customerContext.js, runtime/customerFlow.js, runtime/agentChain.js, setup\n[00:36] Follow-up received\n[00:36] Done (36s)\n\n⏱️ 36s total\n\n</details>",
+      "id": "a64cf413-904f-4e41-8112-aee2f4716f8f",
+      "timestamp": "2026-04-05T15:53:22.941Z"
+    }
+  ]
+}
